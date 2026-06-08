@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FluidKit Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a12; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+
+    /* ─── canvas ─── */
+    #canvas { display: block; width: 100vw; height: 100vh; }
+
+    /* ─── overlay panel ─── */
+    #panel {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(12,12,24,0.82);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(80,140,255,0.25);
+      border-radius: 12px;
+      padding: 16px 18px;
+      width: 260px;
+      user-select: none;
+      z-index: 10;
+    }
+    #panel h1 { font-size: 15px; color: #7ab4ff; letter-spacing: 1px; margin-bottom: 12px; }
+
+    .section { margin-bottom: 14px; }
+    .section label { font-size: 11px; color: #8090a8; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 5px; }
+
+    /* buttons */
+    .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    button {
+      background: rgba(60,90,160,0.4); border: 1px solid rgba(80,140,255,0.3);
+      color: #a8c8ff; border-radius: 6px; padding: 5px 10px; font-size: 12px;
+      cursor: pointer; transition: background 0.15s;
+    }
+    button:hover { background: rgba(80,120,220,0.6); }
+    button.active { background: rgba(60,160,255,0.45); border-color: #60a0ff; color: #fff; }
+
+    /* sliders */
+    input[type=range] {
+      -webkit-appearance: none; width: 100%; height: 4px;
+      background: rgba(80,140,255,0.25); border-radius: 2px; outline: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px;
+      background: #5090ff; border-radius: 50%; cursor: pointer;
+    }
+    .slider-row { display: flex; align-items: center; gap: 8px; }
+    .slider-row span { font-size: 11px; color: #7090b8; min-width: 32px; text-align: right; }
+
+    /* progress bar */
+    #timeline-wrap {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(12,12,24,0.82); backdrop-filter: blur(10px);
+      border: 1px solid rgba(80,140,255,0.25); border-radius: 30px;
+      padding: 10px 20px; display: flex; align-items: center; gap: 12px;
+      z-index: 10; min-width: 420px;
+    }
+    #btn-play { font-size: 18px; background: none; border: none; color: #7ab4ff; cursor: pointer; padding: 0 4px; }
+    #btn-play:hover { color: #fff; }
+    #progress { flex: 1; }
+    #frame-label { font-size: 11px; color: #6080a0; min-width: 70px; text-align: right; }
+
+    /* info bar */
+    #info {
+      position: fixed; top: 16px; right: 16px;
+      background: rgba(12,12,24,0.75); backdrop-filter: blur(8px);
+      border: 1px solid rgba(80,140,255,0.2); border-radius: 10px;
+      padding: 10px 14px; font-size: 11px; color: #6080a0; line-height: 1.7;
+      z-index: 10;
+    }
+    #info strong { color: #9ab8e0; }
+
+    /* drop zone overlay */
+    #drop-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(10,20,60,0.88);
+      align-items: center; justify-content: center;
+      font-size: 22px; color: #7ab4ff; z-index: 100;
+      border: 3px dashed rgba(80,140,255,0.5);
+    }
+    #drop-overlay.active { display: flex; }
+  </style>
+</head>
+<body>
+
+<!-- ── LEFT PANEL ── -->
+<div id="panel">
+  <h1>⚡ FluidKit Viewer</h1>
+
+  <div class="section">
+    <label>データ読み込み</label>
+    <div class="btn-row">
+      <button id="btn-load-file">📂 JSON を開く</button>
+      <button id="btn-demo">🔬 デモデータ</button>
+    </div>
+    <input type="file" id="file-input" accept=".json" style="display:none" />
+  </div>
+
+  <div class="section">
+    <label>表示モード</label>
+    <div class="btn-row">
+      <button id="btn-mode-particle" class="active">● パーティクル</button>
+      <button id="btn-mode-mesh">▲ メッシュ</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <label>カラーマップ</label>
+    <div class="btn-row">
+      <button id="cm-depth" class="active">深度</button>
+      <button id="cm-speed">速度</button>
+      <button id="cm-heat">Heat</button>
+      <button id="cm-ocean">Ocean</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <label>パーティクルサイズ</label>
+    <div class="slider-row">
+      <input type="range" id="sl-size" min="0.5" max="8" step="0.1" value="3.0" />
+      <span id="lbl-size">3.0</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <label>不透明度</label>
+    <div class="slider-row">
+      <input type="range" id="sl-opacity" min="0.1" max="1" step="0.05" value="0.85" />
+      <span id="lbl-opacity">0.85</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <label>再生速度</label>
+    <div class="slider-row">
+      <input type="range" id="sl-speed" min="0.1" max="4" step="0.1" value="1.0" />
+      <span id="lbl-speed">1.0×</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <label>背景</label>
+    <div class="btn-row">
+      <button id="bg-dark" class="active">Dark</button>
+      <button id="bg-blue">Ocean</button>
+      <button id="bg-white">Light</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── INFO ── -->
+<div id="info">
+  <strong>フレーム:</strong> <span id="info-frame">-</span><br>
+  <strong>粒子数:</strong> <span id="info-particles">-</span><br>
+  <strong>FPS:</strong> <span id="info-fps">-</span><br>
+  <strong>ドラッグ:</strong> 回転 | スクロール: ズーム
+</div>
+
+<!-- ── TIMELINE ── -->
+<div id="timeline-wrap">
+  <button id="btn-play">▶</button>
+  <input type="range" id="progress" min="0" max="100" value="0" step="1" />
+  <span id="frame-label">0 / 0</span>
+</div>
+
+<!-- ── DROP OVERLAY ── -->
+<div id="drop-overlay">📂 JSON ファイルをドロップ</div>
+
+<!-- ── CANVAS ── -->
+<canvas id="canvas"></canvas>
+
+<!-- Three.js r158 CDN -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ══════════════════════════════════════════════
+//  SHADER — spherical soft particle
+// ══════════════════════════════════════════════
+const VS = `
+  uniform float uSize;
+  attribute float aSpeed;
+  varying float vSpeed;
+  varying float vY;
+
+  void main() {
+    vSpeed = aSpeed;
+    vY = position.y;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = uSize * (300.0 / -mv.z);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+const FS = `
+  uniform float uOpacity;
+  uniform int   uColorMode;   // 0=depth 1=speed 2=heat 3=ocean
+  uniform float uYMin;
+  uniform float uYMax;
+  varying float vSpeed;
+  varying float vY;
+
+  vec3 colorDepth(float t) {
+    // deep blue → cyan → white
+    return mix(mix(vec3(0.02,0.05,0.3), vec3(0.1,0.6,0.9), t),
+               vec3(0.9,0.95,1.0), t*t);
+  }
+  vec3 colorSpeed(float t) {
+    // dark → green → yellow → red
+    vec3 c0 = vec3(0.05,0.1,0.2);
+    vec3 c1 = vec3(0.1,0.8,0.3);
+    vec3 c2 = vec3(1.0,0.8,0.0);
+    vec3 c3 = vec3(1.0,0.1,0.05);
+    if(t<0.33) return mix(c0,c1,t/0.33);
+    if(t<0.66) return mix(c1,c2,(t-0.33)/0.33);
+    return mix(c2,c3,(t-0.66)/0.34);
+  }
+  vec3 colorHeat(float t) {
+    return mix(vec3(0.05,0.0,0.1), vec3(1.0,0.4,0.0), t);
+  }
+  vec3 colorOcean(float t) {
+    return mix(vec3(0.0,0.05,0.2), vec3(0.0,0.8,0.6), t);
+  }
+
+  void main() {
+    vec2 uv = gl_PointCoord - 0.5;
+    float d = length(uv);
+    if(d > 0.5) discard;
+    float rim = 1.0 - smoothstep(0.25, 0.5, d);
+
+    float t;
+    vec3 col;
+    if(uColorMode == 1) {
+      t = clamp(vSpeed / 5.0, 0.0, 1.0);
+      col = colorSpeed(t);
+    } else if(uColorMode == 2) {
+      t = clamp(vSpeed / 3.0, 0.0, 1.0);
+      col = colorHeat(t);
+    } else if(uColorMode == 3) {
+      float span = max(uYMax - uYMin, 0.001);
+      t = clamp((vY - uYMin) / span, 0.0, 1.0);
+      col = colorOcean(t);
+    } else {
+      float span = max(uYMax - uYMin, 0.001);
+      t = clamp((vY - uYMin) / span, 0.0, 1.0);
+      col = colorDepth(t);
+    }
+
+    col += vec3(0.15) * (1.0 - d / 0.5);   // highlight
+    gl_FragColor = vec4(col, rim * uOpacity);
+  }
+`;
+
+// ══════════════════════════════════════════════
+//  FluidViewer
+// ══════════════════════════════════════════════
+class FluidViewer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this._initScene();
+    this._initParticles();
+    this._initGrid();
+
+    this.frames = [];
+    this.speeds = [];
+    this.meta   = null;
+    this.currentFrame = 0;
+    this.playing = false;
+    this.playbackSpeed = 1.0;
+    this.mode = 'particle';   // 'particle' | 'mesh'
+    this.colorMode = 0;       // 0=depth 1=speed 2=heat 3=ocean
+
+    this._accTime = 0;
+    this._lastTs  = null;
+
+    this._animate = this._animate.bind(this);
+    requestAnimationFrame(this._animate);
+  }
+
+  // ── scene ──────────────────────────────────
+  _initScene() {
+    const W = window.innerWidth, H = window.innerHeight;
+
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.renderer.setSize(W, H);
+
+    this.scene  = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(55, W/H, 0.01, 200);
+    this.camera.position.set(0, 2, 6);
+
+    this.controls = new OrbitControls(this.camera, this.canvas);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.08;
+
+    // ambient + dir light (for mesh mode)
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+    dir.position.set(3, 8, 5);
+    this.scene.add(dir);
+
+    window.addEventListener('resize', () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      this.renderer.setSize(w, h);
+      this.camera.aspect = w / h;
+      this.camera.updateProjectionMatrix();
+    });
+  }
+
+  _initGrid() {
+    this.gridHelper = new THREE.GridHelper(6, 12, 0x203060, 0x182040);
+    this.scene.add(this.gridHelper);
+  }
+
+  _initParticles() {
+    const MAX = 8000;
+    const geo = new THREE.BufferGeometry();
+    const pos  = new Float32Array(MAX * 3);
+    const spd  = new Float32Array(MAX);
+    geo.setAttribute('position', new THREE.BufferAttribute(pos,  3));
+    geo.setAttribute('aSpeed',   new THREE.BufferAttribute(spd,  1));
+
+    this.uniforms = {
+      uSize:      { value: 3.0 },
+      uOpacity:   { value: 0.85 },
+      uColorMode: { value: 0 },
+      uYMin:      { value: 0.0 },
+      uYMax:      { value: 3.0 },
+    };
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this.uniforms,
+      vertexShader: VS,
+      fragmentShader: FS,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.particles = new THREE.Points(geo, mat);
+    this.scene.add(this.particles);
+
+    // mesh mode placeholder (simple sphere mesh cloud — replaced per frame if OBJ available)
+    this.meshGroup = new THREE.Group();
+    this.scene.add(this.meshGroup);
+    this.particles.visible  = true;
+    this.meshGroup.visible  = false;
+  }
+
+  // ── data loading ───────────────────────────
+  loadJSON(json) {
+    this.meta   = json.metadata;
+    this.frames = json.frames  || [];
+    this.speeds = json.speeds  || [];
+    this.currentFrame = 0;
+    this._accTime = 0;
+
+    const b = this.meta.bounds;
+    if (b) {
+      this.uniforms.uYMin.value = b.min[1];
+      this.uniforms.uYMax.value = b.max[1];
+      // カメラをデータに合わせる
+      const cx = (b.min[0]+b.max[0])/2;
+      const cy = (b.min[1]+b.max[1])/2;
+      const cz = (b.min[2]+b.max[2])/2;
+      const span = Math.max(b.max[0]-b.min[0], b.max[1]-b.min[1], b.max[2]-b.min[2]);
+      this.camera.position.set(cx, cy + span*0.4, cz + span*1.4);
+      this.controls.target.set(cx, cy, cz);
+      this.gridHelper.position.set(cx, b.min[1], cz);
+    }
+
+    this._updateFrame(0);
+    document.getElementById('info-particles').textContent = this.meta.particleCount;
+    document.getElementById('info-fps').textContent = this.meta.fps;
+    document.getElementById('progress').max = this.frames.length - 1;
+    this.playing = true;
+    document.getElementById('btn-play').textContent = '⏸';
+  }
+
+  // ── frame update ───────────────────────────
+  _updateFrame(idx) {
+    idx = Math.max(0, Math.min(idx, this.frames.length - 1));
+    this.currentFrame = idx;
+
+    const flat = this.frames[idx];
+    if (!flat || flat.length === 0) return;
+
+    const n   = flat.length / 3;
+    const geo = this.particles.geometry;
+    const posAttr = geo.getAttribute('position');
+    const spdAttr = geo.getAttribute('aSpeed');
+
+    // resize if needed
+    if (posAttr.array.length < flat.length) {
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(flat.length), 3));
+      geo.setAttribute('aSpeed',   new THREE.BufferAttribute(new Float32Array(n), 1));
+    }
+
+    const pa = geo.getAttribute('position').array;
+    const sa = geo.getAttribute('aSpeed').array;
+
+    for (let i = 0; i < flat.length; i++) pa[i] = flat[i];
+
+    const frameSpd = this.speeds[idx];
+    if (frameSpd) {
+      for (let i = 0; i < n; i++) sa[i] = frameSpd[i] || 0;
+    }
+
+    geo.getAttribute('position').needsUpdate = true;
+    geo.getAttribute('aSpeed').needsUpdate   = true;
+    geo.setDrawRange(0, n);
+
+    // mesh mode: update spheres
+    if (this.mode === 'mesh') this._updateMeshMode(flat, n);
+
+    // UI
+    document.getElementById('info-frame').textContent  = idx;
+    document.getElementById('frame-label').textContent = `${idx} / ${this.frames.length - 1}`;
+    document.getElementById('progress').value = idx;
+  }
+
+  _updateMeshMode(flat, n) {
+    // 軽量化: 粒子数を間引いてスフィアで表示
+    const step = Math.max(1, Math.floor(n / 300));
+    while (this.meshGroup.children.length > 0) {
+      this.meshGroup.remove(this.meshGroup.children[0]);
+    }
+    const geo = new THREE.SphereGeometry(0.04, 6, 6);
+    const mat = new THREE.MeshPhongMaterial({ color: 0x2080ff, transparent: true, opacity: 0.7 });
+    for (let i = 0; i < n; i += step) {
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(flat[i*3], flat[i*3+1], flat[i*3+2]);
+      this.meshGroup.add(mesh);
+    }
+  }
+
+  // ── animation loop ─────────────────────────
+  _animate(ts) {
+    requestAnimationFrame(this._animate);
+
+    if (this._lastTs !== null && this.playing && this.frames.length > 0) {
+      const dt  = (ts - this._lastTs) / 1000;
+      this._accTime += dt * this.playbackSpeed;
+      const fpsDt = 1.0 / (this.meta?.fps || 30);
+      while (this._accTime >= fpsDt) {
+        this._accTime -= fpsDt;
+        const next = this.currentFrame + 1;
+        if (next >= this.frames.length) {
+          this._updateFrame(0);   // loop
+        } else {
+          this._updateFrame(next);
+        }
+      }
+    }
+    this._lastTs = ts;
+
+    this.controls.update();
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  // ── public controls ────────────────────────
+  togglePlay() {
+    this.playing = !this.playing;
+    document.getElementById('btn-play').textContent = this.playing ? '⏸' : '▶';
+  }
+
+  seekTo(idx) { this._updateFrame(+idx); }
+
+  setMode(mode) {
+    this.mode = mode;
+    this.particles.visible = (mode === 'particle');
+    this.meshGroup.visible = (mode === 'mesh');
+    if (mode === 'mesh' && this.frames.length > 0) {
+      const flat = this.frames[this.currentFrame];
+      this._updateMeshMode(flat, flat.length / 3);
+    }
+    document.getElementById('btn-mode-particle').classList.toggle('active', mode === 'particle');
+    document.getElementById('btn-mode-mesh').classList.toggle('active', mode === 'mesh');
+  }
+
+  setColorMode(cm) {
+    this.colorMode = cm;
+    this.uniforms.uColorMode.value = cm;
+    ['cm-depth','cm-speed','cm-heat','cm-ocean'].forEach((id, i) => {
+      document.getElementById(id).classList.toggle('active', i === cm);
+    });
+  }
+
+  setBackground(style) {
+    const colors = { dark: '#0a0a12', blue: '#030d1a', white: '#e8ecf0' };
+    document.body.style.background = colors[style] || colors.dark;
+    const fog = { dark: 0x0a0a12, blue: 0x030d1a, white: 0xe8ecf0 };
+    this.scene.background = new THREE.Color(fog[style]);
+    ['bg-dark','bg-blue','bg-white'].forEach(id => {
+      document.getElementById(id).classList.toggle('active', id === `bg-${style}`);
+    });
+  }
+}
+
+// ══════════════════════════════════════════════
+//  Demo data generator (ブラウザ内簡易SPH)
+// ══════════════════════════════════════════════
+function generateDemo() {
+  const N = 600, FRAMES = 90, DT = 0.025;
+  const pos = [], vel = [];
+  // 球形初期配置
+  while (pos.length < N) {
+    const x = (Math.random()-0.5)*1.0;
+    const y = (Math.random()-0.5)*1.0 + 1.8;
+    const z = (Math.random()-0.5)*1.0;
+    if (x*x + (y-1.8)*(y-1.8) + z*z < 0.25) {
+      pos.push([x, y, z]);
+      vel.push([(Math.random()-0.5)*0.1, (Math.random()-0.5)*0.1, (Math.random()-0.5)*0.1]);
+    }
+  }
+  const frames = [], speeds = [];
+  for (let f = 0; f < FRAMES; f++) {
+    const flat = [], spd = [];
+    for (let i = 0; i < N; i++) {
+      // 重力
+      vel[i][1] -= 9.8 * DT;
+      pos[i][0] += vel[i][0] * DT;
+      pos[i][1] += vel[i][1] * DT;
+      pos[i][2] += vel[i][2] * DT;
+      // 床・壁反射
+      const r = 0.25;
+      if(pos[i][1]<0){pos[i][1]=0;vel[i][1]*=-r;}
+      if(pos[i][0]<-1.5){pos[i][0]=-1.5;vel[i][0]*=-r;}
+      if(pos[i][0]> 1.5){pos[i][0]= 1.5;vel[i][0]*=-r;}
+      if(pos[i][2]<-1.5){pos[i][2]=-1.5;vel[i][2]*=-r;}
+      if(pos[i][2]> 1.5){pos[i][2]= 1.5;vel[i][2]*=-r;}
+      flat.push(+pos[i][0].toFixed(4), +pos[i][1].toFixed(4), +pos[i][2].toFixed(4));
+      spd.push(+(Math.hypot(...vel[i])).toFixed(4));
+    }
+    frames.push(flat); speeds.push(spd);
+  }
+  return {
+    metadata: { preset:'demo', description:'ブラウザ内デモ（water_drop）',
+                frameCount: FRAMES, particleCount: N, fps: 40,
+                bounds: { min:[-1.5,0,-1.5], max:[1.5,3,1.5] } },
+    frames, speeds
+  };
+}
+
+// ══════════════════════════════════════════════
+//  Boot
+// ══════════════════════════════════════════════
+const viewer = new FluidViewer(document.getElementById('canvas'));
+
+// ── load demo on start ─────────────────────
+viewer.loadJSON(generateDemo());
+viewer.setBackground('dark');
+
+// ── file open ──────────────────────────────
+document.getElementById('btn-load-file').addEventListener('click', () => {
+  document.getElementById('file-input').click();
+});
+document.getElementById('file-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => viewer.loadJSON(JSON.parse(ev.target.result));
+  reader.readAsText(file);
+});
+
+// ── demo button ────────────────────────────
+document.getElementById('btn-demo').addEventListener('click', () => {
+  viewer.loadJSON(generateDemo());
+});
+
+// ── play / timeline ────────────────────────
+document.getElementById('btn-play').addEventListener('click', () => viewer.togglePlay());
+document.getElementById('progress').addEventListener('input', e => {
+  viewer.playing = false;
+  document.getElementById('btn-play').textContent = '▶';
+  viewer.seekTo(e.target.value);
+});
+
+// ── display mode ───────────────────────────
+document.getElementById('btn-mode-particle').addEventListener('click', () => viewer.setMode('particle'));
+document.getElementById('btn-mode-mesh').addEventListener('click',     () => viewer.setMode('mesh'));
+
+// ── color map ──────────────────────────────
+['depth','speed','heat','ocean'].forEach((name, i) => {
+  document.getElementById(`cm-${name}`).addEventListener('click', () => viewer.setColorMode(i));
+});
+
+// ── sliders ────────────────────────────────
+document.getElementById('sl-size').addEventListener('input', e => {
+  viewer.uniforms.uSize.value = +e.target.value;
+  document.getElementById('lbl-size').textContent = (+e.target.value).toFixed(1);
+});
+document.getElementById('sl-opacity').addEventListener('input', e => {
+  viewer.uniforms.uOpacity.value = +e.target.value;
+  document.getElementById('lbl-opacity').textContent = (+e.target.value).toFixed(2);
+});
+document.getElementById('sl-speed').addEventListener('input', e => {
+  viewer.playbackSpeed = +e.target.value;
+  document.getElementById('lbl-speed').textContent = (+e.target.value).toFixed(1) + '×';
+});
+
+// ── background ─────────────────────────────
+['dark','blue','white'].forEach(style => {
+  document.getElementById(`bg-${style}`).addEventListener('click', () => viewer.setBackground(style));
+});
+
+// ── drag & drop ────────────────────────────
+const overlay = document.getElementById('drop-overlay');
+document.body.addEventListener('dragover', e => { e.preventDefault(); overlay.classList.add('active'); });
+document.body.addEventListener('dragleave', () => overlay.classList.remove('active'));
+document.body.addEventListener('drop', e => {
+  e.preventDefault(); overlay.classList.remove('active');
+  const file = e.dataTransfer.files[0];
+  if (!file || !file.name.endsWith('.json')) return;
+  const reader = new FileReader();
+  reader.onload = ev => viewer.loadJSON(JSON.parse(ev.target.result));
+  reader.readAsText(file);
+});
+</script>
+</body>
+</html>

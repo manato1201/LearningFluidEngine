@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FluidKit — ドキュメント</title>
+  <style>
+    :root {
+      --bg:       #07080f;
+      --bg2:      #0d0f1c;
+      --bg3:      #131629;
+      --border:   rgba(80,140,255,0.18);
+      --accent:   #4e9eff;
+      --accent2:  #38d9c0;
+      --accent3:  #c471ed;
+      --text:     #d4dff0;
+      --muted:    #6a7fa0;
+      --code-bg:  #0c0f1e;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    /* ── layout ── */
+    .layout { display: flex; min-height: 100vh; }
+
+    /* ── sidebar ── */
+    nav {
+      width: 260px; min-width: 260px;
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      padding: 28px 0;
+      position: sticky; top: 0; height: 100vh;
+      overflow-y: auto;
+    }
+    nav .logo {
+      padding: 0 24px 20px;
+      font-size: 18px; font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 1px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+    nav .logo span { color: var(--accent2); }
+    nav ul { list-style: none; }
+    nav ul li a {
+      display: block;
+      padding: 7px 24px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      transition: color 0.15s, background 0.15s;
+      border-left: 2px solid transparent;
+    }
+    nav ul li a:hover { color: var(--text); background: rgba(80,140,255,0.06); }
+    nav ul li a.active { color: var(--accent); border-left-color: var(--accent); }
+    nav ul li.section-title {
+      padding: 14px 24px 4px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: rgba(100,120,160,0.6);
+    }
+
+    /* ── main ── */
+    main { flex: 1; max-width: 900px; padding: 52px 56px; overflow-x: hidden; }
+
+    /* ── headings ── */
+    h1 { font-size: 32px; color: #fff; margin-bottom: 8px; letter-spacing: -0.5px; }
+    h1 .sub { font-size: 14px; color: var(--muted); font-weight: 400; margin-left: 10px; }
+    h2 {
+      font-size: 22px; color: var(--accent);
+      margin: 52px 0 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    h3 { font-size: 16px; color: var(--accent2); margin: 28px 0 10px; }
+    h4 { font-size: 14px; color: #a0b8d8; margin: 20px 0 8px; }
+
+    /* ── hero ── */
+    .hero {
+      background: linear-gradient(135deg, rgba(78,158,255,0.08), rgba(56,217,192,0.06));
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px 32px;
+      margin-bottom: 36px;
+    }
+    .hero p { color: var(--muted); margin-top: 8px; font-size: 14px; }
+    .badge-row { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+    .badge {
+      background: rgba(78,158,255,0.12);
+      border: 1px solid rgba(78,158,255,0.25);
+      border-radius: 20px;
+      padding: 3px 12px;
+      font-size: 12px;
+      color: var(--accent);
+    }
+    .badge.green { background: rgba(56,217,192,0.1); border-color: rgba(56,217,192,0.25); color: var(--accent2); }
+    .badge.purple { background: rgba(196,113,237,0.1); border-color: rgba(196,113,237,0.25); color: var(--accent3); }
+
+    /* ── pipeline diagram ── */
+    .pipeline {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      margin: 20px 0;
+      overflow-x: auto;
+    }
+    .pipe-row { display: flex; align-items: center; gap: 0; margin: 6px 0; flex-wrap: wrap; }
+    .pipe-box {
+      background: rgba(78,158,255,0.1);
+      border: 1px solid rgba(78,158,255,0.25);
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .pipe-box.green { background: rgba(56,217,192,0.08); border-color: rgba(56,217,192,0.2); color: var(--accent2); }
+    .pipe-box.purple { background: rgba(196,113,237,0.08); border-color: rgba(196,113,237,0.2); color: var(--accent3); }
+    .pipe-box.orange { background: rgba(255,160,60,0.08); border-color: rgba(255,160,60,0.2); color: #ffb060; }
+    .pipe-arrow { color: var(--muted); padding: 0 10px; font-size: 16px; }
+
+    /* ── algo cards ── */
+    .algo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0; }
+    .algo-card {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+    }
+    .algo-card h4 { margin: 0 0 6px; color: var(--accent); font-size: 13px; }
+    .algo-card p { font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+    /* ── math ── */
+    .math {
+      background: var(--code-bg);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 14px 18px;
+      margin: 14px 0;
+      font-family: 'Courier New', monospace;
+      font-size: 13.5px;
+      color: #c8d8f0;
+      overflow-x: auto;
+    }
+    .math .comment { color: var(--muted); }
+
+    /* ── code ── */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 18px;
+      font-size: 13px;
+      overflow-x: auto;
+      margin: 12px 0;
+      line-height: 1.6;
+    }
+    code { color: #a8d0ff; font-family: 'Cascadia Code', 'Fira Code', 'Courier New', monospace; }
+    .kw { color: #c471ed; }
+    .fn { color: #4fc3f7; }
+    .str { color: #a5d6a7; }
+    .num { color: #ffb74d; }
+    .cm { color: #546e8a; }
+
+    /* ── tables ── */
+    .tbl-wrap { overflow-x: auto; margin: 14px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th {
+      background: rgba(78,158,255,0.1);
+      color: var(--accent);
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    td { padding: 9px 14px; border-bottom: 1px solid rgba(80,120,180,0.1); color: var(--text); vertical-align: top; }
+    tr:hover td { background: rgba(80,140,255,0.04); }
+
+    /* ── result card ── */
+    .result-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin: 16px 0; }
+    .result-card {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+    }
+    .result-card .val { font-size: 22px; font-weight: 700; color: var(--accent2); }
+    .result-card .lbl { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    /* ── step list ── */
+    .steps { list-style: none; margin: 14px 0; }
+    .steps li {
+      display: flex; gap: 14px; align-items: flex-start;
+      padding: 10px 0; border-bottom: 1px solid rgba(80,120,180,0.08);
+    }
+    .steps li .num {
+      background: var(--accent); color: #fff;
+      border-radius: 50%; width: 22px; height: 22px; min-width: 22px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; margin-top: 1px;
+    }
+    .steps li .num.green { background: var(--accent2); color: #07080f; }
+    .steps li .num.purple { background: var(--accent3); }
+
+    /* ── tip / warn box ── */
+    .box {
+      border-radius: 8px; padding: 14px 18px; margin: 14px 0;
+      font-size: 13.5px; border-left: 3px solid;
+    }
+    .box.tip { background: rgba(56,217,192,0.07); border-color: var(--accent2); color: #b0e8e0; }
+    .box.warn { background: rgba(255,180,60,0.07); border-color: #ffb060; color: #ffe0a0; }
+    .box.info { background: rgba(78,158,255,0.07); border-color: var(--accent); color: #b8d8ff; }
+
+    /* ── divider ── */
+    hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+
+    /* ── footer ── */
+    footer { padding: 32px 56px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+
+    /* ── responsive ── */
+    @media (max-width: 900px) {
+      nav { display: none; }
+      main { padding: 32px 24px; }
+      .algo-grid, .result-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ── SIDEBAR ── -->
+<nav>
+  <div class="logo">⚡ Fluid<span>Kit</span></div>
+  <ul>
+    <li class="section-title">はじめに</li>
+    <li><a href="#overview">概要</a></li>
+    <li><a href="#pipeline">パイプライン</a></li>
+    <li><a href="#quickstart">クイックスタート</a></li>
+
+    <li class="section-title">アルゴリズム</li>
+    <li><a href="algorithms.html" style="color:#38d9c0;font-weight:600;">📐 アルゴリズム詳細解説 →</a></li>
+    <li><a href="#sph">SPH 流体シミュレーション</a></li>
+    <li><a href="#fengine">fluid-engine-dev エンジン</a></li>
+    <li><a href="#neural">Neural Fluid (GNN)</a></li>
+    <li><a href="#render">レンダリング</a></li>
+
+    <li class="section-title">リファレンス</li>
+    <li><a href="#files">ファイル構成</a></li>
+    <li><a href="#results">学習結果</a></li>
+    <li><a href="#next">次のフェーズ</a></li>
+  </ul>
+</nav>
+
+<!-- ── MAIN ── -->
+<main>
+
+  <!-- HERO -->
+  <div class="hero">
+    <h1>FluidKit <span class="sub">v0.1</span></h1>
+    <p>fluid-engine-dev の知見をもとに作った、流体エフェクト生成 & 多ツール連携パイプライン。<br>
+       SPH シミュレーション → Neural Fluid 学習 → Three.js ブラウザ表示 をワンストップで。</p>
+    <div class="badge-row">
+      <span class="badge">Python 3.12</span>
+      <span class="badge">PyTorch 2.6 + CUDA</span>
+      <span class="badge green">Three.js r158</span>
+      <span class="badge green">fluid-engine-dev 1.3.3</span>
+      <span class="badge purple">RTX 3070</span>
+    </div>
+  </div>
+
+  <!-- OVERVIEW -->
+  <section id="overview">
+    <h2>概要</h2>
+    <p>FluidKit は以下の 4 層で構成されます。</p>
+    <div class="algo-grid">
+      <div class="algo-card">
+        <h4>① 物理シミュレーション層</h4>
+        <p>fluid-engine-dev (C++) の SPH/FLIP/Level Set エンジンでリアルな流体データを生成。<br>
+           pyjet なし環境向けに Python SimpleSPH も内蔵。</p>
+      </div>
+      <div class="algo-card">
+        <h4>② データ変換層</h4>
+        <p>XYZ / POS 形式のシミュレーション出力を Three.js が読める <code>frames.json</code> に変換。
+           粒子数・FPS・境界ボックスのメタデータも付与。</p>
+      </div>
+      <div class="algo-card">
+        <h4>③ Neural Fluid 層</h4>
+        <p>Graph Neural Network (Interaction Network) で「現在フレーム → 次フレーム」を学習。
+           訓練済みモデルの推論結果も Viewer でリアルタイム表示。</p>
+      </div>
+      <div class="algo-card">
+        <h4>④ レンダリング層</h4>
+        <p>Three.js + カスタム GLSL シェーダーで球形パーティクルをリアルタイム描画。
+           パーティクル / メッシュ切り替え、カラーマップ 4 種対応。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- PIPELINE -->
+  <section id="pipeline">
+    <h2>パイプライン全体図</h2>
+    <div class="pipeline">
+      <div class="pipe-row">
+        <div class="pipe-box">fluid-engine-dev<br><small>sph_sim.exe</small></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box">XYZ ファイル群<br><small>frame_000000.xyz …</small></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box green">xyz_to_json.py<br><small>変換</small></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box orange">frames.json</div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box purple">Three.js Viewer<br><small>index.html</small></div>
+      </div>
+      <div class="pipe-row" style="margin-top:16px">
+        <div class="pipe-box">gen_sample.py<br><small>SimpleSPH (Python)</small></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box orange">frames.json</div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box purple">Three.js Viewer</div>
+      </div>
+      <div class="pipe-row" style="margin-top:16px">
+        <div class="pipe-box">collect_data.py<br><small>多パラメータシミュ</small></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box">.npy データセット</div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box green">train.py<br><small>GNN 訓練</small></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box green">infer_to_json.py<br><small>推論</small></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box orange">frames.json</div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box purple">Three.js Viewer</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- QUICKSTART -->
+  <section id="quickstart">
+    <h2>クイックスタート</h2>
+    <ul class="steps">
+      <li>
+        <div class="num">1</div>
+        <div><strong>Viewer を開く</strong><br>
+          <code>viewer/index.html</code> をブラウザで開くだけ。デモが自動再生されます。</div>
+      </li>
+      <li>
+        <div class="num">2</div>
+        <div><strong>サンプルデータ生成</strong><br>
+          <pre><code><span class="cm"># water_drop / smoke / splash プリセット</span>
+python tools/gen_sample.py --preset water_drop --frames 120</code></pre>
+        </div>
+      </li>
+      <li>
+        <div class="num">3</div>
+        <div><strong>実機シミュ → 変換</strong><br>
+          <pre><code>sph_sim.exe -e 1 -s 0.03 -f 80 -o ./sph_output
+python tools/xyz_to_json.py --input ./sph_output --output viewer/data/sph.json</code></pre>
+        </div>
+      </li>
+      <li>
+        <div class="num green">4</div>
+        <div><strong>Neural Fluid 訓練</strong><br>
+          <pre><code>python neural/collect_data.py --simulations 20
+python neural/train.py --epochs 80
+python neural/infer_to_json.py --checkpoint ./neural/checkpoints/best.pt</code></pre>
+        </div>
+      </li>
+    </ul>
+  </section>
+
+  <hr />
+
+  <!-- SPH -->
+  <section id="sph">
+    <h2>SPH 流体シミュレーション</h2>
+    <p>
+      <strong>SPH (Smoothed Particle Hydrodynamics)</strong> は流体を有限個の粒子で近似する手法。
+      連続体力学の偏微分方程式を粒子ごとの相互作用に変換して数値的に解く。
+    </p>
+
+    <h3>カーネル関数 (Poly6)</h3>
+    <div class="math">
+W(r, h) = (1 − (r/h)²)³ &nbsp;&nbsp; (r &lt; h の場合)
+<br>
+W(r, h) = 0             &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (r ≥ h の場合)
+    </div>
+    <p>Poly6 カーネルは <strong>密度計算</strong> に使用。距離に対して滑らかに減衰し数値安定性が高い。</p>
+
+    <h3>密度推定</h3>
+    <div class="math">
+ρ<sub>i</sub> = Σ<sub>j</sub> W(|r<sub>i</sub> − r<sub>j</sub>|, h)
+    </div>
+
+    <h3>圧力（Tait EOS 線形近似）</h3>
+    <div class="math">
+p<sub>i</sub> = k (ρ<sub>i</sub> − ρ<sub>0</sub>)
+<br>
+<span class="comment">k: 剛性係数,  ρ₀: 静止密度</span>
+    </div>
+
+    <h3>運動方程式（Navier-Stokes の粒子版）</h3>
+    <div class="math">
+a<sub>i</sub> = g  +  a<sup>pressure</sup><sub>i</sub>  +  a<sup>viscosity</sup><sub>i</sub>
+<br><br>
+a<sup>pressure</sup><sub>i</sub>  = −Σ<sub>j</sub> (p<sub>i</sub>+p<sub>j</sub>) / (2ρ<sub>j</sub>) · W(r<sub>ij</sub>) · r̂<sub>ij</sub>
+<br>
+a<sup>viscosity</sup><sub>i</sub> = μ Σ<sub>j</sub> W(r<sub>ij</sub>) / ρ<sub>j</sub> · (v<sub>j</sub> − v<sub>i</sub>)
+    </div>
+
+    <h3>時間積分（Symplectic Euler）</h3>
+    <pre><code><span class="kw">vel</span>[i] += acc[i] * dt   <span class="cm"># 速度を先に更新</span>
+<span class="kw">pos</span>[i] += vel[i] * dt   <span class="cm"># 更新後の速度で位置を移動</span></code></pre>
+    <div class="box tip">前向きオイラーよりエネルギー保存性が高く、同じ計算コストで安定性が向上します。</div>
+
+    <h3>プリセット別物理パラメータ</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>プリセット</th><th>重力</th><th>剛性 k</th><th>粘性 μ</th><th>特徴</th></tr>
+        <tr><td>water_drop</td><td>(0, −9.8, 0)</td><td>80</td><td>0.01</td><td>低粘性、鋭い衝突</td></tr>
+        <tr><td>smoke</td><td>(0, +0.5, 0)</td><td>20</td><td>0.05</td><td>浮力で上昇、高粘性</td></tr>
+        <tr><td>splash</td><td>(0, −9.8, 0)</td><td>100</td><td>0.005</td><td>高剛性、水平衝突</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- FLUID ENGINE -->
+  <section id="fengine">
+    <h2>fluid-engine-dev コアエンジン</h2>
+    <p>C++ ライブラリ <code>sph_sim.exe</code> が内部で使うアルゴリズム群。</p>
+
+    <h3>PCISPH（予測補正 SPH）</h3>
+    <p>標準 SPH の「小さい Δt が必要」という問題を解決する反復スキーム。</p>
+    <ul class="steps">
+      <li><div class="num">1</div><div>外力・粘性のみで仮位置・仮速度を予測</div></li>
+      <li><div class="num">2</div><div>密度誤差 ρ̃ᵢ − ρ₀ を計算</div></li>
+      <li><div class="num">3</div><div>圧力を反復修正して密度誤差を閾値以下に収束</div></li>
+      <li><div class="num">4</div><div>修正圧力で最終的な加速度を計算</div></li>
+    </ul>
+    <div class="box info">標準 SPH の 5〜10 倍大きい Δt で安定動作。計算量が大幅に削減されます。</div>
+
+    <h3>FLIP（Fluid-Implicit Particle）</h3>
+    <p>粒子と格子のハイブリッド手法。粒子の詳細な挙動と格子の圧力ソルバーを組み合わせる。</p>
+    <div class="pipeline" style="padding:18px">
+      <div class="pipe-row">
+        <div class="pipe-box">粒子</div>
+        <div class="pipe-arrow">→ P2G →</div>
+        <div class="pipe-box green">格子速度場</div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box green">圧力ソルバー<br><small>∇·u=0</small></div>
+        <div class="pipe-arrow">→ Δu →</div>
+        <div class="pipe-box">粒子速度更新</div>
+        <div class="pipe-arrow">→ advect →</div>
+        <div class="pipe-box">粒子</div>
+      </div>
+    </div>
+
+    <h3>圧力ソルバー（MGPCG）</h3>
+    <p>多重格子前処理付き共役勾配法。非圧縮条件（∇·u = 0）を満足する圧力場を求める。</p>
+    <div class="math">
+ポアソン方程式: ∇²p = (ρ/Δt) ∇·u
+<br><br>
+V サイクル（MG 前処理）:
+  細かい格子 → 制限 → 粗い格子 → 平滑化 → 延長 → 細かい格子
+<br>
+計算量: O(N log N)
+    </div>
+
+    <h3>Level Set 法</h3>
+    <p>符号付き距離場 φ(x) で液体界面を暗示的に表現。</p>
+    <div class="math">
+φ &lt; 0 : 液体内部  |  φ = 0 : 液体表面  |  φ &gt; 0 : 気相
+<br><br>
+移流: ∂φ/∂t + u·∇φ = 0
+再初期化（FMM）: |∇φ| = 1 を維持
+    </div>
+  </section>
+
+  <!-- NEURAL -->
+  <section id="neural">
+    <h2>Neural Fluid (GNN)</h2>
+    <p>
+      <strong>Interaction Network</strong> ベースの Graph Neural Network。
+      粒子の現在状態（位置＋速度）から次フレームの位置変化量を予測する。
+    </p>
+
+    <h3>モデルアーキテクチャ</h3>
+    <div class="pipeline">
+      <div class="pipe-row">
+        <div class="pipe-box">入力<br><small>x ∈ R^(B×N×6)</small></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box green">ParticleEncoder<br><small>MLP: 6→128→64</small></div>
+        <div class="pipe-arrow">→ h →</div>
+        <div class="pipe-box purple">Message Passing<br><small>KNN + EdgeMLP × 2</small></div>
+        <div class="pipe-arrow">→ h' →</div>
+        <div class="pipe-box orange">Decoder<br><small>MLP: 64→128→3</small></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box">Δpos<br><small>R^(B×N×3)</small></div>
+      </div>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>コンポーネント</th><th>入力次元</th><th>出力次元</th><th>役割</th></tr>
+        <tr><td>ParticleEncoder</td><td>6 (pos+vel)</td><td>64 (latent)</td><td>局所特徴抽出</td></tr>
+        <tr><td>EdgeMLP</td><td>2L+4 = 132</td><td>64</td><td>粒子間相互作用</td></tr>
+        <tr><td>NodeMLP</td><td>L×2 = 128</td><td>64</td><td>特徴集約・更新</td></tr>
+        <tr><td>Decoder</td><td>64</td><td>3 (Δpos)</td><td>位置変化量予測</td></tr>
+        <tr><td><strong>合計パラメータ</strong></td><td colspan="3"><strong>184,003</strong></td></tr>
+      </table>
+    </div>
+
+    <h3>KNN グラフ構築</h3>
+    <pre><code><span class="cm"># 各粒子の k 近傍を動的に計算</span>
+diff = pos.unsqueeze(<span class="num">2</span>) - pos.unsqueeze(<span class="num">1</span>)   <span class="cm"># (B,N,N,3)</span>
+dist = (diff**<span class="num">2</span>).<span class="fn">sum</span>(-<span class="num">1</span>)                    <span class="cm"># (B,N,N)</span>
+_, idx = dist.<span class="fn">topk</span>(k, largest=<span class="kw">False</span>)          <span class="cm"># (B,N,k)</span></code></pre>
+
+    <h3>メッセージパッシング</h3>
+    <div class="math">
+エッジ特徴: e<sub>ij</sub> = [h<sub>i</sub> ‖ h<sub>j</sub> ‖ (r<sub>j</sub>−r<sub>i</sub>) ‖ ‖r<sub>j</sub>−r<sub>i</sub>‖]
+<br>
+メッセージ: m<sub>ij</sub> = MLP<sub>edge</sub>(e<sub>ij</sub>)
+<br>
+集約: agg<sub>i</sub> = Σ<sub>j∈N(i)</sub> m<sub>ij</sub>
+<br>
+更新: h'<sub>i</sub> = MLP<sub>node</sub>([h<sub>i</sub> ‖ agg<sub>i</sub>])
+    </div>
+
+    <h3>損失関数</h3>
+    <div class="math">
+L = w<sub>pos</sub> · MSE(pred_pos, true_pos)
+  + w<sub>smooth</sub> · mean((pred[1:] − pred[:-1])²)
+<br>
+w<sub>pos</sub>=1.0,  w<sub>smooth</sub>=0.01
+    </div>
+
+    <h3>活性化関数（SiLU）</h3>
+    <div class="math">
+SiLU(x) = x · σ(x) = x / (1 + e<sup>−x</sup>)
+<span class="comment">// ReLU より滑らか。物理量の連続変化に適している</span>
+    </div>
+
+    <h3>最適化設定</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>ハイパーパラメータ</th><th>値</th></tr>
+        <tr><td>オプティマイザー</td><td>Adam (β₁=0.9, β₂=0.999)</td></tr>
+        <tr><td>初期学習率</td><td>1×10⁻³</td></tr>
+        <tr><td>スケジューラー</td><td>ReduceLROnPlateau (patience=8, factor=0.5)</td></tr>
+        <tr><td>勾配クリッピング</td><td>‖∇‖ ≤ 1.0</td></tr>
+        <tr><td>バッチサイズ</td><td>32</td></tr>
+        <tr><td>近傍数 k</td><td>12</td></tr>
+        <tr><td>メッセージパッシング回数</td><td>2</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- RENDER -->
+  <section id="render">
+    <h2>レンダリング層 (Three.js Viewer)</h2>
+
+    <h3>球形パーティクルシェーダー</h3>
+    <p>GPU の 1 ポイント = 1 スプライトを球形に見せる手法。ジオメトリ生成が不要で高速。</p>
+    <pre><code><span class="cm">// 頂点シェーダー: 遠近感のある点サイズ計算</span>
+gl_PointSize = uSize * (<span class="num">300.0</span> / -mv.z);
+
+<span class="cm">// フラグメントシェーダー: 円形クリップ + ソフトエッジ</span>
+<span class="kw">vec2</span> uv = gl_PointCoord - <span class="num">0.5</span>;
+<span class="kw">float</span> d = <span class="fn">length</span>(uv);
+<span class="kw">if</span> (d > <span class="num">0.5</span>) <span class="kw">discard</span>;
+<span class="kw">float</span> alpha = <span class="num">1.0</span> - <span class="fn">smoothstep</span>(<span class="num">0.3</span>, <span class="num">0.5</span>, d);</code></pre>
+
+    <h3>カラーマッピング</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>モード</th><th>マッピング</th><th>用途</th></tr>
+        <tr><td>depth</td><td>Y座標 → 深青〜白</td><td>水深の可視化</td></tr>
+        <tr><td>speed</td><td>速度大きさ → 黒〜緑〜赤</td><td>流速分布</td></tr>
+        <tr><td>heat</td><td>速度 → 暗紫〜橙</td><td>高エネルギー領域</td></tr>
+        <tr><td>ocean</td><td>Y座標 → 深青〜ターコイズ</td><td>海洋エフェクト</td></tr>
+      </table>
+    </div>
+
+    <h3>加算ブレンディング</h3>
+    <pre><code>blending: THREE.AdditiveBlending,  <span class="cm">// 重なると明るくなる</span>
+depthWrite: <span class="kw">false</span>,               <span class="cm">// 粒子同士のZソート不要</span></code></pre>
+    <p>密度の高い領域が自然にハイライトされ、流体らしい見た目になる。</p>
+
+    <h3>時間ベースアニメーション</h3>
+    <pre><code><span class="cm">// requestAnimationFrame の不規則な呼び出しに対応</span>
+this._accTime += dt * playbackSpeed;
+<span class="kw">while</span> (this._accTime >= fpsDt) {
+    this._accTime -= fpsDt;
+    this._updateFrame(nextFrame);
+}</code></pre>
+  </section>
+
+  <hr />
+
+  <!-- FILES -->
+  <section id="files">
+    <h2>ファイル構成</h2>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>ファイル</th><th>役割</th><th>主要アルゴリズム</th></tr>
+        <tr><td><code>tools/gen_sample.py</code></td><td>Python SPH シミュレーター</td><td>Poly6 カーネル, Symplectic Euler</td></tr>
+        <tr><td><code>tools/xyz_to_json.py</code></td><td>XYZ/POS → JSON 変換</td><td>フォーマット自動検出, 境界ボックス計算</td></tr>
+        <tr><td><code>neural/model.py</code></td><td>Neural Fluid モデル定義</td><td>Interaction Network, KNN グラフ, SiLU</td></tr>
+        <tr><td><code>neural/collect_data.py</code></td><td>学習データ一括収集</td><td>多パラメータランダムサンプリング, 正規化</td></tr>
+        <tr><td><code>neural/train.py</code></td><td>モデル訓練</td><td>Adam, ReduceLROnPlateau, 勾配クリッピング</td></tr>
+        <tr><td><code>neural/infer_to_json.py</code></td><td>推論 → Viewer 出力</td><td>自律ロールアウト, 逆正規化</td></tr>
+        <tr><td><code>viewer/index.html</code></td><td>Three.js Viewer</td><td>Point Sprite シェーダー, 加算ブレンド</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="results">
+    <h2>学習結果</h2>
+    <div class="result-grid">
+      <div class="result-card"><div class="val">1,580</div><div class="lbl">学習サンプル総数</div></div>
+      <div class="result-card"><div class="val">184K</div><div class="lbl">モデルパラメータ数</div></div>
+      <div class="result-card"><div class="val">~2 min</div><div class="lbl">訓練時間 (RTX 3070)</div></div>
+      <div class="result-card"><div class="val">0.0530</div><div class="lbl">Best Val Loss</div></div>
+    </div>
+
+    <h3>学習曲線</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>Epoch</th><th>Train Loss</th><th>Val Loss</th><th>備考</th></tr>
+        <tr><td>1</td><td>0.08991</td><td>0.06786</td><td>← best (初期)</td></tr>
+        <tr><td>20</td><td>0.05868</td><td>0.05450</td><td></td></tr>
+        <tr><td>45</td><td>0.05726</td><td>0.05318</td><td>← best</td></tr>
+        <tr><td>80</td><td>0.05617</td><td>0.05315</td><td>収束</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- NEXT -->
+  <section id="next">
+    <h2>次のフェーズ</h2>
+    <div class="algo-grid">
+      <div class="algo-card">
+        <h4>Blender 連携</h4>
+        <p>OBJ シーケンスを Blender に自動インポートしてレンダリングパイプラインを構築。
+           MCP Blender ツールと連携。</p>
+      </div>
+      <div class="algo-card">
+        <h4>pyjet 統合</h4>
+        <p>C++ の fluid-engine-dev を Python から直接呼び出し。
+           gen_sample.py を高精度シミュに差し替えて学習データ品質向上。</p>
+      </div>
+      <div class="algo-card">
+        <h4>Neural Fluid 精度向上</h4>
+        <p>データ量増加（100 シミュ以上）、モデル拡大（L=128, mp_steps=4）、
+           速度予測も学習対象に追加。</p>
+      </div>
+      <div class="algo-card">
+        <h4>Unity / Unreal 出力</h4>
+        <p>VFX Graph / Niagara 向けにパーティクルデータを JSON / CSV でエクスポートするツールを追加。</p>
+      </div>
+    </div>
+
+    <div class="box warn" style="margin-top:24px">
+      <strong>既知の制限：</strong>
+      Neural Fluid の自律ロールアウト（推論を連鎖）は誤差が蓄積するため、
+      長時間シミュレーションでは挙動が実機から乖離します。
+      短期予測（20〜30 フレーム）での使用を推奨します。
+    </div>
+  </section>
+
+</main>
+</div>
+
+<footer>
+  FluidKit v0.1 &nbsp;—&nbsp; fluid-engine-dev 1.3.3 ベース &nbsp;|&nbsp;
+  Python 3.12 / PyTorch 2.6 / Three.js r158 &nbsp;|&nbsp;
+  MIT License
+</footer>
+
+<script>
+  // アクティブセクションのハイライト
+  const links = document.querySelectorAll('nav a');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const active = document.querySelector(`nav a[href="#${e.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { threshold: 0.3 });
+  document.querySelectorAll('section[id]').forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

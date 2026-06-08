@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FluidKit — アルゴリズム解説</title>
+
+  <!-- MathJax for LaTeX math rendering -->
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['$','$']], displayMath: [['$$','$$']], tags: 'ams' },
+      options: { skipHtmlTags: ['script','noscript','style','textarea','pre'] }
+    };
+  </script>
+  <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+
+  <style>
+    :root {
+      --bg:      #07080f;
+      --bg2:     #0d0f1c;
+      --bg3:     #111425;
+      --bg4:     #0c0f1e;
+      --border:  rgba(80,140,255,0.16);
+      --accent:  #4e9eff;
+      --a2:      #38d9c0;
+      --a3:      #c471ed;
+      --a4:      #ffb060;
+      --text:    #d4dff0;
+      --muted:   #6a7fa0;
+    }
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html { scroll-behavior:smooth; scroll-padding-top:24px; }
+    body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; font-size:15px; line-height:1.8; }
+
+    /* ── layout ── */
+    .wrap { display:flex; min-height:100vh; }
+
+    /* ── sidebar ── */
+    nav {
+      width:256px; min-width:256px;
+      background:var(--bg2);
+      border-right:1px solid var(--border);
+      position:sticky; top:0; height:100vh;
+      overflow-y:auto; padding:24px 0;
+      scrollbar-width:thin; scrollbar-color:var(--border) transparent;
+    }
+    .nav-logo {
+      padding:0 20px 18px;
+      font-size:15px; font-weight:700; color:var(--accent);
+      letter-spacing:.5px;
+      border-bottom:1px solid var(--border);
+      margin-bottom:12px;
+      display:flex; align-items:center; gap:8px;
+    }
+    .nav-logo a { color:inherit; text-decoration:none; }
+    .nav-logo .back { font-size:11px; color:var(--muted); font-weight:400; }
+    nav ul { list-style:none; }
+    nav li.cat {
+      padding:12px 20px 4px;
+      font-size:10px; text-transform:uppercase;
+      letter-spacing:1.2px; color:rgba(100,130,170,.55);
+    }
+    nav li a {
+      display:block; padding:6px 20px 6px 28px;
+      font-size:13px; color:var(--muted);
+      text-decoration:none;
+      border-left:2px solid transparent;
+      transition:color .12s, background .12s;
+    }
+    nav li a:hover { color:var(--text); background:rgba(78,158,255,.05); }
+    nav li a.on { color:var(--accent); border-left-color:var(--accent); background:rgba(78,158,255,.06); }
+    nav li a.sub { padding-left:40px; font-size:12px; }
+
+    /* ── main ── */
+    main { flex:1; max-width:860px; padding:52px 60px 80px; }
+
+    /* ── page title ── */
+    .page-hero {
+      margin-bottom:40px;
+      padding-bottom:24px;
+      border-bottom:1px solid var(--border);
+    }
+    .page-hero h1 { font-size:28px; color:#fff; letter-spacing:-.3px; }
+    .page-hero p  { color:var(--muted); margin-top:8px; font-size:14px; }
+    .tag-row { display:flex; gap:7px; flex-wrap:wrap; margin-top:12px; }
+    .tag {
+      padding:3px 11px; border-radius:20px; font-size:11px;
+      background:rgba(78,158,255,.1); border:1px solid rgba(78,158,255,.22); color:var(--accent);
+    }
+    .tag.g { background:rgba(56,217,192,.08); border-color:rgba(56,217,192,.2); color:var(--a2); }
+    .tag.p { background:rgba(196,113,237,.08); border-color:rgba(196,113,237,.2); color:var(--a3); }
+    .tag.o { background:rgba(255,176,96,.08); border-color:rgba(255,176,96,.2); color:var(--a4); }
+
+    /* ── section headings ── */
+    h2 {
+      font-size:21px; color:var(--accent);
+      margin:56px 0 18px;
+      padding-bottom:10px;
+      border-bottom:1px solid var(--border);
+      scroll-margin-top:28px;
+    }
+    h3 { font-size:16px; color:var(--a2); margin:30px 0 12px; scroll-margin-top:28px; }
+    h4 { font-size:14px; color:#a8bcd8; margin:22px 0 8px; }
+    p  { margin-bottom:10px; }
+    hr { border:none; border-top:1px solid var(--border); margin:44px 0; }
+
+    /* ── math display ── */
+    .math-block {
+      background:var(--bg4);
+      border-left:3px solid var(--accent);
+      border-radius:0 8px 8px 0;
+      padding:16px 22px;
+      margin:14px 0;
+      overflow-x:auto;
+      font-size:15px;
+    }
+    .math-block.green { border-color:var(--a2); }
+    .math-block.purple{ border-color:var(--a3); }
+
+    /* ── code ── */
+    pre {
+      background:var(--bg4);
+      border:1px solid var(--border);
+      border-radius:8px;
+      padding:16px 18px;
+      font-size:13px;
+      overflow-x:auto;
+      margin:12px 0;
+      line-height:1.65;
+      position:relative;
+    }
+    pre .lang {
+      position:absolute; top:8px; right:12px;
+      font-size:10px; color:var(--muted);
+      text-transform:uppercase; letter-spacing:.5px;
+    }
+    code { font-family:'Cascadia Code','Fira Code','Courier New',monospace; color:#a8d0ff; }
+    .kw  { color:#c471ed; }
+    .fn  { color:#4fc3f7; }
+    .str { color:#a5d6a7; }
+    .num { color:#ffb74d; }
+    .cm  { color:#546e8a; font-style:italic; }
+    .gl  { color:#80cbc4; }   /* glsl type */
+    .op  { color:#f48fb1; }
+
+    /* ── tables ── */
+    .tbl { overflow-x:auto; margin:14px 0; }
+    table { width:100%; border-collapse:collapse; font-size:13.5px; }
+    th {
+      background:rgba(78,158,255,.09); color:var(--accent);
+      padding:10px 14px; text-align:left;
+      border-bottom:1px solid var(--border);
+      font-weight:600; letter-spacing:.3px;
+    }
+    td { padding:9px 14px; border-bottom:1px solid rgba(80,120,180,.09); vertical-align:top; }
+    tr:hover td { background:rgba(78,158,255,.03); }
+    td code { background:rgba(78,158,255,.08); padding:1px 5px; border-radius:4px; font-size:12.5px; }
+
+    /* ── info / tip / warn boxes ── */
+    .box {
+      border-radius:8px; padding:13px 18px;
+      margin:14px 0; font-size:13.5px; border-left:3px solid;
+    }
+    .box.tip  { background:rgba(56,217,192,.07); border-color:var(--a2);  color:#b0e8e0; }
+    .box.info { background:rgba(78,158,255,.07); border-color:var(--accent);color:#b8d8ff; }
+    .box.warn { background:rgba(255,176,96,.07); border-color:var(--a4);  color:#ffe0a0; }
+
+    /* ── algorithm card grid ── */
+    .card-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:16px 0; }
+    .card {
+      background:var(--bg3); border:1px solid var(--border);
+      border-radius:10px; padding:18px 20px;
+    }
+    .card h4 { margin:0 0 7px; font-size:13px; color:var(--accent); }
+    .card p  { font-size:13px; color:var(--muted); margin:0; line-height:1.65; }
+
+    /* ── pipeline diagram ── */
+    .pipe {
+      background:var(--bg3); border:1px solid var(--border);
+      border-radius:10px; padding:22px 24px; margin:18px 0; overflow-x:auto;
+    }
+    .pipe-row { display:flex; align-items:center; gap:0; flex-wrap:wrap; margin:5px 0; }
+    .pbox {
+      background:rgba(78,158,255,.1); border:1px solid rgba(78,158,255,.22);
+      border-radius:7px; padding:8px 16px;
+      font-size:13px; white-space:nowrap; line-height:1.4; text-align:center;
+    }
+    .pbox small { display:block; font-size:11px; color:var(--muted); }
+    .pbox.g { background:rgba(56,217,192,.08); border-color:rgba(56,217,192,.2); color:var(--a2); }
+    .pbox.p { background:rgba(196,113,237,.08); border-color:rgba(196,113,237,.2); color:var(--a3); }
+    .pbox.o { background:rgba(255,176,96,.08); border-color:rgba(255,176,96,.2); color:var(--a4); }
+    .parr { color:var(--muted); padding:0 10px; font-size:15px; flex-shrink:0; }
+
+    /* ── arch diagram ── */
+    .arch {
+      display:flex; flex-direction:column; align-items:center;
+      gap:0; margin:20px auto; max-width:560px;
+    }
+    .arch-node {
+      background:var(--bg3); border:1px solid var(--border);
+      border-radius:8px; padding:10px 24px;
+      text-align:center; width:100%; font-size:13.5px;
+    }
+    .arch-node .dim { font-size:11px; color:var(--muted); margin-top:3px; }
+    .arch-node.enc { border-color:rgba(78,158,255,.4); }
+    .arch-node.mp  { border-color:rgba(56,217,192,.4); color:var(--a2); }
+    .arch-node.dec { border-color:rgba(255,176,96,.4); color:var(--a4); }
+    .arch-arrow {
+      width:2px; height:28px; background:var(--border);
+      position:relative; flex-shrink:0;
+    }
+    .arch-arrow::after {
+      content:''; position:absolute; bottom:-6px; left:-4px;
+      border:5px solid transparent; border-top-color:var(--border);
+    }
+    .arch-label {
+      font-size:11px; color:var(--muted); margin:2px 0;
+      align-self:center;
+    }
+
+    /* ── learning curve mini chart ── */
+    .lc-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:16px 0; }
+    .lc-card {
+      background:var(--bg3); border:1px solid var(--border);
+      border-radius:8px; padding:14px; text-align:center;
+    }
+    .lc-card .v { font-size:20px; font-weight:700; color:var(--a2); }
+    .lc-card .l { font-size:11px; color:var(--muted); margin-top:4px; }
+
+    /* ── responsive ── */
+    @media (max-width:800px) {
+      nav { display:none; }
+      main { padding:28px 22px; }
+      .card-grid, .lc-grid { grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ══ SIDEBAR ══ -->
+<nav>
+  <div class="nav-logo">
+    <div>
+      ⚡ FluidKit
+      <div class="back"><a href="index.html">← ドキュメントトップ</a></div>
+    </div>
+  </div>
+  <ul>
+    <li class="cat">概要</li>
+    <li><a href="#overview">アルゴリズム構成</a></li>
+    <li><a href="#pipeline">パイプライン全体図</a></li>
+
+    <li class="cat">流体シミュレーション</li>
+    <li><a href="#sph">SPH の基本原理</a></li>
+    <li><a href="#kernel" class="sub">Poly6 カーネル</a></li>
+    <li><a href="#density" class="sub">密度推定</a></li>
+    <li><a href="#pressure" class="sub">圧力・Tait EOS</a></li>
+    <li><a href="#navier" class="sub">Navier-Stokes 粒子版</a></li>
+    <li><a href="#integration" class="sub">時間積分</a></li>
+    <li><a href="#presets" class="sub">プリセット設定</a></li>
+
+    <li class="cat">fluid-engine-dev</li>
+    <li><a href="#pcisph">PCISPH</a></li>
+    <li><a href="#flip">FLIP / PIC</a></li>
+    <li><a href="#mgpcg">圧力ソルバー MGPCG</a></li>
+    <li><a href="#levelset">Level Set 法</a></li>
+    <li><a href="#semilag">セミラグランジュ移流</a></li>
+
+    <li class="cat">Neural Fluid</li>
+    <li><a href="#arch">モデルアーキテクチャ</a></li>
+    <li><a href="#knn" class="sub">KNN グラフ構築</a></li>
+    <li><a href="#mp" class="sub">メッセージパッシング</a></li>
+    <li><a href="#silu" class="sub">活性化関数 SiLU</a></li>
+    <li><a href="#loss" class="sub">損失関数</a></li>
+    <li><a href="#optim" class="sub">最適化設定</a></li>
+    <li><a href="#trainresult" class="sub">学習結果</a></li>
+
+    <li class="cat">レンダリング</li>
+    <li><a href="#shader">Point Sprite シェーダー</a></li>
+    <li><a href="#colormap" class="sub">カラーマッピング</a></li>
+    <li><a href="#blending" class="sub">加算ブレンディング</a></li>
+    <li><a href="#anim" class="sub">アニメーション制御</a></li>
+
+    <li class="cat">まとめ</li>
+    <li><a href="#rationale">選定理由</a></li>
+  </ul>
+</nav>
+
+<!-- ══ MAIN ══ -->
+<main>
+
+  <!-- PAGE HERO -->
+  <div class="page-hero">
+    <h1>FluidKit — 使用アルゴリズム解説</h1>
+    <p>シミュレーション・Neural Fluid・レンダリングの各層で使われるアルゴリズムを、数式とコードで詳解します。</p>
+    <div class="tag-row">
+      <span class="tag">SPH / PCISPH</span>
+      <span class="tag">FLIP / Level Set</span>
+      <span class="tag">MGPCG</span>
+      <span class="tag g">Interaction Network</span>
+      <span class="tag g">Message Passing</span>
+      <span class="tag p">GLSL Shader</span>
+      <span class="tag o">Symplectic Euler</span>
+    </div>
+  </div>
+
+  <!-- ══ OVERVIEW ══ -->
+  <section id="overview">
+    <h2>アルゴリズム構成</h2>
+    <div class="card-grid">
+      <div class="card">
+        <h4>① 流体シミュレーション層</h4>
+        <p>SPH カーネルによる粒子間力計算。Symplectic Euler で時間積分。
+           Python 実装（gen_sample.py）と C++ 実装（fluid-engine-dev）の 2 系統。</p>
+      </div>
+      <div class="card">
+        <h4>② fluid-engine-dev エンジン</h4>
+        <p>PCISPH・FLIP・Level Set・MGPCG 圧力ソルバーなど研究レベルの実装を C++ で提供。
+           sph_sim.exe が XYZ/POS 形式でパーティクルデータを出力。</p>
+      </div>
+      <div class="card">
+        <h4>③ Neural Fluid 層</h4>
+        <p>Interaction Network（GNN）で「現在フレーム → 次フレーム」を学習。
+           KNN グラフ上のメッセージパッシングで粒子間相互作用を近似。</p>
+      </div>
+      <div class="card">
+        <h4>④ レンダリング層</h4>
+        <p>Three.js + カスタム GLSL シェーダーで球形パーティクルをリアルタイム描画。
+           加算ブレンドで密度が高い領域を自然にハイライト。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ PIPELINE ══ -->
+  <section id="pipeline">
+    <h2>パイプライン全体図</h2>
+    <div class="pipe">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">▶ リアルシミュレーションルート</p>
+      <div class="pipe-row">
+        <div class="pbox">fluid-engine-dev<small>PCISPH / FLIP / Level Set</small></div>
+        <div class="parr">→</div>
+        <div class="pbox">XYZ / POS<small>frame_000000.xyz …</small></div>
+        <div class="parr">→</div>
+        <div class="pbox g">xyz_to_json.py<small>フォーマット自動検出</small></div>
+        <div class="parr">→</div>
+        <div class="pbox o">frames.json</div>
+        <div class="parr">→</div>
+        <div class="pbox p">Three.js Viewer</div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin:18px 0 10px;">▶ Python SPH ルート</p>
+      <div class="pipe-row">
+        <div class="pbox">gen_sample.py<small>SimpleSPH / Poly6</small></div>
+        <div class="parr">→</div>
+        <div class="pbox o">frames.json</div>
+        <div class="parr">→</div>
+        <div class="pbox p">Three.js Viewer</div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin:18px 0 10px;">▶ Neural Fluid ルート</p>
+      <div class="pipe-row">
+        <div class="pbox">collect_data.py<small>多パラメータ乱数シミュ</small></div>
+        <div class="parr">→</div>
+        <div class="pbox">.npy dataset</div>
+        <div class="parr">→</div>
+        <div class="pbox g">train.py<small>Interaction Network</small></div>
+        <div class="parr">→</div>
+        <div class="pbox g">infer_to_json.py<small>自律ロールアウト</small></div>
+        <div class="parr">→</div>
+        <div class="pbox o">frames.json</div>
+        <div class="parr">→</div>
+        <div class="pbox p">Three.js Viewer</div>
+      </div>
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- ══ SPH ══ -->
+  <section id="sph">
+    <h2>① SPH 流体シミュレーション</h2>
+    <p>
+      <strong>SPH（Smoothed Particle Hydrodynamics）</strong> は流体連続体を有限個の粒子で近似し、
+      各粒子が持つ物理量（密度・圧力・速度）を近傍粒子の重み付き和として評価する手法。
+      偏微分方程式を格子なしで解けるため、自由表面・大変形流体に強い。
+    </p>
+    <p>物理量 $A$ の位置 $\mathbf{r}$ における値：</p>
+    <div class="math-block">
+      $$A(\mathbf{r}) = \sum_j m_j \frac{A_j}{\rho_j} W(\mathbf{r} - \mathbf{r}_j,\, h)$$
+    </div>
+  </section>
+
+  <!-- KERNEL -->
+  <section id="kernel">
+    <h3>Poly6 カーネル関数</h3>
+    <p>カーネル関数 $W$ は粒子間の距離に応じた重みを決める。本実装では密度計算に <strong>Poly6 カーネル</strong> を使用：</p>
+    <div class="math-block">
+      $$W(r,\,h) = \begin{cases} \left(1 - \dfrac{r^2}{h^2}\right)^3 & r < h \\ 0 & r \geq h \end{cases}$$
+    </div>
+    <pre><code><span class="kw">def</span> <span class="fn">_kernel</span>(r, h):
+    <span class="kw">if</span> r >= h:
+        <span class="kw">return</span> <span class="num">0.0</span>
+    q = <span class="num">1.0</span> - (r / h) ** <span class="num">2</span>
+    <span class="kw">return</span> q * q * q   <span class="cm"># (1 - (r/h)²)³</span>
+<span class="lang">python</span></code></pre>
+    <div class="box tip">
+      Poly6 は距離の <em>2 乗</em> を使うため、sqrt の計算を省略できます。数値安定性が高く密度計算に最適です。
+      圧力勾配にはより急峻な <strong>Spiky カーネル</strong> が適しますが、本実装では簡略化しています。
+    </div>
+  </section>
+
+  <!-- DENSITY -->
+  <section id="density">
+    <h3>密度推定</h3>
+    <p>粒子 $i$ の密度を、影響半径 $h$ 内の全近傍粒子の寄与で計算：</p>
+    <div class="math-block">
+      $$\rho_i = \sum_j W\!\left(|\mathbf{r}_i - \mathbf{r}_j|,\, h\right)$$
+    </div>
+    <p>（質量を定数 1 に正規化したシンプルな形式）</p>
+  </section>
+
+  <!-- PRESSURE -->
+  <section id="pressure">
+    <h3>圧力 — Tait EOS 線形近似</h3>
+    <div class="math-block green">
+      $$p_i = k\,(\rho_i - \rho_0)$$
+    </div>
+    <div class="tbl">
+      <table>
+        <tr><th>記号</th><th>意味</th><th>実装変数</th></tr>
+        <tr><td>$k$</td><td>剛性係数（大きいほど非圧縮に近い）</td><td><code>stiffness</code></td></tr>
+        <tr><td>$\rho_0$</td><td>静止密度（目標密度）</td><td><code>rest_density</code></td></tr>
+      </table>
+    </div>
+    <p>
+      $\rho_i > \rho_0$ のとき $p_i > 0$（正圧：粒子を押し広げる）、
+      $\rho_i < \rho_0$ のとき $p_i < 0$（負圧：粒子を引き寄せる）。
+    </p>
+  </section>
+
+  <!-- NAVIER-STOKES -->
+  <section id="navier">
+    <h3>Navier-Stokes 方程式の粒子離散化</h3>
+    <p>各粒子の加速度を重力・圧力・粘性の 3 項に分解する：</p>
+    <div class="math-block">
+      $$\mathbf{a}_i = \underbrace{\mathbf{g}}_{\text{重力}} + \underbrace{\mathbf{a}_i^{\text{pressure}}}_{\text{圧力項}} + \underbrace{\mathbf{a}_i^{\text{viscosity}}}_{\text{粘性項}}$$
+    </div>
+
+    <h4>圧力勾配項（対称形式）</h4>
+    <p>両粒子の圧力を平均することで作用・反作用が自動的に成立：</p>
+    <div class="math-block">
+      $$\mathbf{a}_i^{\text{pressure}} = -\sum_j \frac{p_i + p_j}{2\,\rho_j}\,W(r_{ij},h)\,\hat{\mathbf{r}}_{ij}$$
+    </div>
+
+    <h4>粘性項</h4>
+    <p>速度差に比例する散逸力。流体の "ねばり" を表現：</p>
+    <div class="math-block">
+      $$\mathbf{a}_i^{\text{viscosity}} = \mu \sum_j \frac{W(r_{ij},h)}{\rho_j}\,(\mathbf{v}_j - \mathbf{v}_i)$$
+    </div>
+  </section>
+
+  <!-- INTEGRATION -->
+  <section id="integration">
+    <h3>時間積分 — Symplectic Euler</h3>
+    <p>
+      <strong>Symplectic Euler</strong>（半陰解法オイラー）は、速度を先に更新してからその速度で位置を更新する。
+      前向きオイラーよりエネルギー保存性が高く、同じ計算コストで安定性が向上する。
+    </p>
+    <div class="math-block green">
+      $$\mathbf{v}_i^{n+1} = \mathbf{v}_i^n + \mathbf{a}_i^n \,\Delta t$$
+      $$\mathbf{r}_i^{n+1} = \mathbf{r}_i^n + \mathbf{v}_i^{n+1} \Delta t \quad \leftarrow \text{更新後の速度を使う}$$
+    </div>
+    <pre><code>vel[i] += acc[i] * dt   <span class="cm"># ① 速度を先に更新</span>
+pos[i] += vel[i] * dt   <span class="cm"># ② 更新後の速度で位置を移動</span>
+<span class="lang">python</span></code></pre>
+
+    <h4>境界処理（AABB 反射）</h4>
+    <pre><code><span class="kw">if</span> pos[i][<span class="num">1</span>] < y_min:
+    pos[i][<span class="num">1</span>] = y_min
+    vel[i][<span class="num">1</span>] *= -restitution   <span class="cm"># 反発係数 0.3</span>
+<span class="lang">python</span></code></pre>
+  </section>
+
+  <!-- PRESETS -->
+  <section id="presets">
+    <h3>プリセット別物理パラメータ</h3>
+    <div class="tbl">
+      <table>
+        <tr><th>プリセット</th><th>重力 $\mathbf{g}$</th><th>剛性 $k$</th><th>粘性 $\mu$</th><th>特徴</th></tr>
+        <tr><td><code>water_drop</code></td><td>$(0,\,-9.8,\,0)$</td><td>80</td><td>0.01</td><td>低粘性・鋭い衝突</td></tr>
+        <tr><td><code>smoke</code></td><td>$(0,\,+0.5,\,0)$</td><td>20</td><td>0.05</td><td>浮力で上昇・高粘性</td></tr>
+        <tr><td><code>splash</code></td><td>$(0,\,-9.8,\,0)$</td><td>100</td><td>0.005</td><td>高剛性・水平衝突</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- ══ FLUID-ENGINE-DEV ══ -->
+  <section id="pcisph">
+    <h2>② fluid-engine-dev コアエンジン</h2>
+    <h3>PCISPH — 予測補正 SPH</h3>
+    <p>
+      標準 SPH は非圧縮条件を厳密に満たすために非常に小さい $\Delta t$ が必要。
+      <strong>PCISPH</strong>（Predictive-Corrective Incompressible SPH）はこれを反復で解決する。
+    </p>
+    <div class="pipe" style="padding:18px;">
+      <div class="pipe-row">
+        <div class="pbox"><b>①</b> 外力・粘性で<br>仮位置 $\tilde{\mathbf{r}}$ を予測</div>
+        <div class="parr">→</div>
+        <div class="pbox g"><b>②</b> 密度誤差を計算<br>$\tilde{\rho}_i - \rho_0$</div>
+        <div class="parr">→</div>
+        <div class="pbox g"><b>③</b> 圧力を修正<br>（反復収束）</div>
+        <div class="parr">→</div>
+        <div class="pbox"><b>④</b> 修正圧力で<br>最終加速度</div>
+      </div>
+    </div>
+    <div class="box info">標準 SPH の <strong>5〜10 倍</strong> 大きい $\Delta t$ で安定動作します。計算量は反復回数分増えますが、トータルのコストは削減されます。</div>
+  </section>
+
+  <section id="flip">
+    <h3>FLIP — Fluid-Implicit Particle</h3>
+    <p>粒子と格子のハイブリッド手法。粒子が持つ詳細な挙動と格子の効率的な圧力ソルバーを組み合わせる。</p>
+    <div class="pipe">
+      <div class="pipe-row">
+        <div class="pbox">粒子</div>
+        <div class="parr">— P2G →</div>
+        <div class="pbox g">格子速度場 $\mathbf{u}^n$</div>
+        <div class="parr">→</div>
+        <div class="pbox g">圧力ソルバー<br><small>$\nabla \cdot \mathbf{u} = 0$</small></div>
+        <div class="parr">→</div>
+        <div class="pbox g">$\Delta\mathbf{u}$</div>
+        <div class="parr">— G2P →</div>
+        <div class="pbox">粒子速度更新</div>
+        <div class="parr">→</div>
+        <div class="pbox">移流 advect</div>
+      </div>
+    </div>
+    <p>粒子速度の更新方式による違い：</p>
+    <div class="tbl">
+      <table>
+        <tr><th>手法</th><th>更新式</th><th>特徴</th></tr>
+        <tr><td><strong>FLIP</strong></td><td>$\mathbf{v} \mathrel{+}= \Delta\mathbf{u}$</td><td>運動量保存・数値粘性小・ノイジー</td></tr>
+        <tr><td><strong>PIC</strong></td><td>$\mathbf{v} = \mathbf{u}_{\text{grid}}$</td><td>数値粘性大・安定・エネルギー散逸</td></tr>
+        <tr><td><strong>FLIP/PIC 混合</strong></td><td>$(1-\alpha)\cdot\text{PIC} + \alpha\cdot\text{FLIP}$</td><td>$\alpha$ でトレードオフを調整</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="mgpcg">
+    <h3>MGPCG — 多重格子前処理付き共役勾配法</h3>
+    <p>非圧縮条件を満たす圧力場を求めるためのポアソン方程式を解く：</p>
+    <div class="math-block">
+      $$\nabla^2 p = \frac{\rho}{\Delta t}\,\nabla \cdot \mathbf{u}$$
+    </div>
+    <p><strong>多重格子（MG）前処理子</strong> の V サイクル：</p>
+    <div class="pipe" style="padding:18px;">
+      <div class="pipe-row">
+        <div class="pbox">細かい格子<br><small>平滑化 (Gauss-Seidel)</small></div>
+        <div class="parr">— 制限 →</div>
+        <div class="pbox g">粗い格子<br><small>直接解法</small></div>
+        <div class="parr">— 延長 →</div>
+        <div class="pbox">細かい格子<br><small>平滑化</small></div>
+      </div>
+    </div>
+    <div class="box info">MG 前処理により共役勾配法の収束が大幅に加速。計算量は $O(N \log N)$ 程度。大解像度格子でも実用的な速度で動作します。</div>
+  </section>
+
+  <section id="levelset">
+    <h3>Level Set 法</h3>
+    <p>
+      液体表面を符号付き距離場 $\phi(\mathbf{x})$ で暗示的に表現する手法。
+      メッシュが不要で、トポロジーの変化（液滴の分裂・合体）を自然に扱える。
+    </p>
+    <div class="math-block green">
+      $$\phi(\mathbf{x}) \begin{cases} < 0 & \text{液体内部} \\ = 0 & \text{液体表面} \\ > 0 & \text{気相} \end{cases}$$
+    </div>
+
+    <h4>移流方程式</h4>
+    <div class="math-block">
+      $$\frac{\partial \phi}{\partial t} + \mathbf{u} \cdot \nabla \phi = 0$$
+    </div>
+
+    <h4>再初期化（FMM）</h4>
+    <p>移流後に $|\nabla \phi| = 1$（距離場の条件）が崩れるため、<strong>Fast Marching Method</strong> で符号付き距離場を再構築する。</p>
+    <div class="box tip">FMM は界面からの伝播を一方向に行うため、反復法より高速 $O(N \log N)$ に再初期化できます。</div>
+  </section>
+
+  <section id="semilag">
+    <h3>セミラグランジュ移流</h3>
+    <p>
+      格子点 $\mathbf{x}$ の値を更新するために、その格子点から <em>過去にさかのぼって</em>
+      流体粒子がどこから来たかを計算する（バックトレース）。
+    </p>
+    <div class="math-block green">
+      $$\mathbf{x}_{\text{back}} = \mathbf{x} - \mathbf{u}(\mathbf{x})\,\Delta t$$
+      $$\phi^{n+1}(\mathbf{x}) = \phi^n(\mathbf{x}_{\text{back}}) \quad \leftarrow \text{補間で取得}$$
+    </div>
+    <div class="box tip">
+      CFL 条件（$|\mathbf{u}|\,\Delta t \leq \Delta x$）を超える $\Delta t$ でも <strong>無条件安定</strong>。
+      補間精度（線形 or 三次スプライン）が精度を左右します。
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- ══ NEURAL FLUID ══ -->
+  <section id="arch">
+    <h2>③ Neural Fluid — Interaction Network</h2>
+    <p>
+      <strong>Interaction Network</strong>（Battaglia et al., 2016）は物理システムの相互作用を
+      グラフニューラルネットワークでモデル化する手法。
+      粒子データへの最も自然な帰納バイアスを持つため採用。
+    </p>
+
+    <h3>モデル構造</h3>
+    <div class="arch">
+      <div class="arch-node enc">
+        <strong>ParticleEncoder</strong>（MLP: 6 → 128 → 64）
+        <div class="dim">入力 $\mathbf{x} \in \mathbb{R}^{B \times N \times 6}$ → 潜在 $\mathbf{h} \in \mathbb{R}^{B \times N \times L}$</div>
+      </div>
+      <div class="arch-arrow"></div>
+      <div class="arch-label">$\mathbf{h}$</div>
+      <div class="arch-arrow"></div>
+      <div class="arch-node mp">
+        <strong>Message Passing × 2</strong>（KNN Graph + Edge MLP + Node MLP）
+        <div class="dim">近傍粒子との相互作用を集約して特徴を更新</div>
+      </div>
+      <div class="arch-arrow"></div>
+      <div class="arch-label">$\mathbf{h}'$</div>
+      <div class="arch-arrow"></div>
+      <div class="arch-node dec">
+        <strong>Decoder</strong>（MLP: 64 → 128 → 3）
+        <div class="dim">出力 $\Delta\mathbf{pos} \in \mathbb{R}^{B \times N \times 3}$（位置変化量）</div>
+      </div>
+    </div>
+
+    <div class="tbl" style="margin-top:20px;">
+      <table>
+        <tr><th>コンポーネント</th><th>入力次元</th><th>出力次元</th><th>役割</th></tr>
+        <tr><td>ParticleEncoder</td><td>6</td><td>64（$L$）</td><td>局所特徴抽出</td></tr>
+        <tr><td>EdgeMLP</td><td>$2L+4=132$</td><td>64</td><td>粒子間相互作用</td></tr>
+        <tr><td>NodeMLP</td><td>$2L=128$</td><td>64</td><td>特徴集約・更新</td></tr>
+        <tr><td>Decoder</td><td>64</td><td>3</td><td>位置変化量予測</td></tr>
+        <tr><td colspan="2"><strong>総パラメータ数</strong></td><td colspan="2"><strong>184,003</strong></td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="knn">
+    <h3>KNN グラフ構築</h3>
+    <p>各フレームで粒子位置から $k$ 近傍グラフを動的に構築する：</p>
+    <pre><code><span class="kw">def</span> <span class="fn">knn_graph</span>(pos, k=<span class="num">12</span>):
+    <span class="cm"># (B, N, N, 3) — 全粒子ペアの差ベクトル</span>
+    diff = pos.unsqueeze(<span class="num">2</span>) - pos.unsqueeze(<span class="num">1</span>)
+    <span class="cm"># (B, N, N)   — ユークリッド距離の 2 乗</span>
+    dist = (diff ** <span class="num">2</span>).sum(-<span class="num">1</span>)
+    dist.diagonal(dim1=<span class="num">1</span>, dim2=<span class="num">2</span>).fill_(float(<span class="str">'inf'</span>))  <span class="cm"># 自己除外</span>
+    _, idx = dist.topk(k, largest=<span class="kw">False</span>)  <span class="cm"># (B, N, k)</span>
+    <span class="kw">return</span> idx
+<span class="lang">python</span></code></pre>
+    <div class="box tip">距離の 2 乗を使うため sqrt を省略。粒子位置が毎フレーム変化しても対応できる動的グラフ構築です。計算量は $O(N^2)$（粒子数 400 程度では十分高速）。</div>
+  </section>
+
+  <section id="mp">
+    <h3>メッセージパッシング</h3>
+    <p>各粒子の潜在ベクトル $\mathbf{h}_i$ を近傍粒子からのメッセージで更新するプロセス：</p>
+
+    <h4>Step 1 — エッジ特徴の組み立て</h4>
+    <div class="math-block">
+      $$\mathbf{e}_{ij} = \left[\mathbf{h}_i \;\|\; \mathbf{h}_j \;\|\; (\mathbf{r}_j - \mathbf{r}_i) \;\|\; \|\mathbf{r}_j - \mathbf{r}_i\|\right] \;\in\; \mathbb{R}^{2L+4}$$
+    </div>
+    <p>2 粒子の潜在特徴 + 相対位置 + 距離スカラー。相対位置を含めることで回転不変性を近似的に実現。</p>
+
+    <h4>Step 2 — メッセージ計算（EdgeMLP）</h4>
+    <div class="math-block green">
+      $$\mathbf{m}_{ij} = \mathrm{MLP}_{\text{edge}}(\mathbf{e}_{ij}) \;\in\; \mathbb{R}^{L}$$
+    </div>
+
+    <h4>Step 3 — 集約（Sum Aggregation）</h4>
+    <div class="math-block green">
+      $$\text{agg}_i = \sum_{j \in \mathcal{N}(i)} \mathbf{m}_{ij}$$
+    </div>
+
+    <h4>Step 4 — ノード更新（NodeMLP）</h4>
+    <div class="math-block green">
+      $$\mathbf{h}'_i = \mathrm{MLP}_{\text{node}}\!\left([\mathbf{h}_i \;\|\; \text{agg}_i]\right)$$
+    </div>
+    <p>Step 1〜4 を <strong>$n_{\text{mp}} = 2$</strong> 回繰り返す（遠くの粒子の情報を段階的に伝播）。</p>
+  </section>
+
+  <section id="silu">
+    <h3>活性化関数 — SiLU</h3>
+    <div class="math-block purple">
+      $$\mathrm{SiLU}(x) = x \cdot \sigma(x) = \frac{x}{1 + e^{-x}}$$
+    </div>
+    <div class="tbl">
+      <table>
+        <tr><th>活性化関数</th><th>特徴</th><th>採用理由</th></tr>
+        <tr><td>ReLU</td><td>$\max(0,x)$</td><td>— 不採用：$x < 0$ で勾配消失</td></tr>
+        <tr><td><strong>SiLU</strong></td><td>$x \sigma(x)$</td><td>✓ 滑らか、負値も通す。物理量の連続変化に適合</td></tr>
+        <tr><td>GELU</td><td>$x \Phi(x)$</td><td>近似値だが SiLU とほぼ同等</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="loss">
+    <h3>損失関数</h3>
+    <div class="math-block purple">
+      $$\mathcal{L} = w_{\text{pos}} \cdot \mathrm{MSE}(\hat{\mathbf{r}},\, \mathbf{r}^*) + w_{\text{smooth}} \cdot \frac{1}{N-1}\sum_{i=1}^{N-1}\|\hat{\mathbf{r}}_{i+1} - \hat{\mathbf{r}}_i\|^2$$
+    </div>
+    <div class="tbl">
+      <table>
+        <tr><th>項</th><th>重み</th><th>役割</th></tr>
+        <tr><td>位置 MSE</td><td>$w_{\text{pos}} = 1.0$</td><td>次フレームの位置予測精度を直接最小化</td></tr>
+        <tr><td>平滑化正則化</td><td>$w_{\text{smooth}} = 0.01$</td><td>隣接粒子間の急激な位置変化を抑制。物理的に自然な運動を誘導</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="optim">
+    <h3>最適化設定</h3>
+    <pre><code>optimizer = Adam(model.parameters(), lr=<span class="num">1e-3</span>)
+scheduler = ReduceLROnPlateau(optimizer,
+                patience=<span class="num">8</span>, factor=<span class="num">0.5</span>)   <span class="cm"># val loss が改善しなければ lr ÷ 2</span>
+nn.utils.<span class="fn">clip_grad_norm_</span>(model.parameters(), <span class="num">1.0</span>)  <span class="cm"># 勾配クリッピング</span>
+<span class="lang">python</span></code></pre>
+    <div class="tbl">
+      <table>
+        <tr><th>ハイパーパラメータ</th><th>値</th></tr>
+        <tr><td>オプティマイザー</td><td>Adam ($\beta_1=0.9,\;\beta_2=0.999$)</td></tr>
+        <tr><td>初期学習率</td><td>$1 \times 10^{-3}$</td></tr>
+        <tr><td>スケジューラー</td><td>ReduceLROnPlateau（patience=8, factor=0.5）</td></tr>
+        <tr><td>勾配クリッピング</td><td>$\|\nabla\| \leq 1.0$</td></tr>
+        <tr><td>バッチサイズ</td><td>32</td></tr>
+        <tr><td>近傍数 $k$</td><td>12</td></tr>
+        <tr><td>MP ステップ数</td><td>2</td></tr>
+        <tr><td>エポック数</td><td>80</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="trainresult">
+    <h3>学習結果</h3>
+    <div class="lc-grid">
+      <div class="lc-card"><div class="v">1,580</div><div class="l">学習サンプル数</div></div>
+      <div class="lc-card"><div class="v">184K</div><div class="l">パラメータ数</div></div>
+      <div class="lc-card"><div class="v">~2 min</div><div class="l">訓練時間（RTX 3070）</div></div>
+      <div class="lc-card"><div class="v">0.0530</div><div class="l">Best Val Loss</div></div>
+    </div>
+    <div class="tbl">
+      <table>
+        <tr><th>Epoch</th><th>Train Loss</th><th>Val Loss</th><th>備考</th></tr>
+        <tr><td>1</td><td>0.08991</td><td>0.06786</td><td>← 初期 best</td></tr>
+        <tr><td>20</td><td>0.05868</td><td>0.05450</td><td></td></tr>
+        <tr><td>45</td><td>0.05726</td><td>0.05318</td><td>← best ★</td></tr>
+        <tr><td>80</td><td>0.05617</td><td>0.05315</td><td>収束</td></tr>
+      </table>
+    </div>
+    <div class="box warn">
+      <strong>制限事項：</strong> 自律ロールアウト（推論を連鎖）では誤差が蓄積するため、
+      長時間シミュレーション（30 フレーム以上）では実機から乖離します。
+      短期予測や補助ツールとしての利用を推奨します。
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- ══ RENDERING ══ -->
+  <section id="shader">
+    <h2>④ レンダリング層</h2>
+    <h3>Point Sprite — 球形パーティクルシェーダー</h3>
+    <p>
+      Three.js の <code>THREE.Points</code> は GPU の 1 描画コール = 1 ポイント。
+      各点を正方形スプライトとして描画し、フラグメントシェーダーで円形（球形）にクリップする。
+      ジオメトリシェーダー不要で数万粒子をリアルタイム処理できる。
+    </p>
+
+    <h4>頂点シェーダー — 遠近感のあるサイズ計算</h4>
+    <pre><code><span class="gl">uniform float</span> uSize;
+<span class="gl">attribute float</span> aSpeed;
+<span class="gl">varying float</span> vSpeed;
+<span class="gl">varying float</span> vY;
+
+<span class="kw">void</span> <span class="fn">main</span>() {
+    vSpeed = aSpeed;
+    vY = position.y;
+    <span class="gl">vec4</span> mv = modelViewMatrix * <span class="gl">vec4</span>(position, <span class="num">1.0</span>);
+    <span class="cm">// カメラ距離 -mv.z に反比例してサイズを変化させる（遠近感）</span>
+    gl_PointSize = uSize * (<span class="num">300.0</span> / -mv.z);
+    gl_Position  = projectionMatrix * mv;
+}
+<span class="lang">glsl</span></code></pre>
+
+    <h4>フラグメントシェーダー — 球形クリップ & ソフトエッジ</h4>
+    <pre><code><span class="gl">varying float</span> vSpeed;
+<span class="gl">varying float</span> vY;
+
+<span class="kw">void</span> <span class="fn">main</span>() {
+    <span class="gl">vec2</span> uv = gl_PointCoord - <span class="num">0.5</span>;   <span class="cm">// 中心を (0,0) に</span>
+    <span class="kw">float</span> d = <span class="fn">length</span>(uv);
+    <span class="kw">if</span> (d > <span class="num">0.5</span>) <span class="kw">discard</span>;           <span class="cm">// 円形クリップ</span>
+
+    <span class="cm">// smoothstep でエッジをぼかす → ソフトな球に見える</span>
+    <span class="kw">float</span> alpha = <span class="num">1.0</span> - <span class="fn">smoothstep</span>(<span class="num">0.3</span>, <span class="num">0.5</span>, d);
+
+    <span class="gl">vec3</span> col = <span class="fn">colorDepth</span>(vY);   <span class="cm">// カラーマップを適用</span>
+    col += <span class="gl">vec3</span>(<span class="num">0.15</span>) * (<span class="num">1.0</span> - d / <span class="num">0.5</span>);  <span class="cm">// ハイライト</span>
+    gl_FragColor = <span class="gl">vec4</span>(col, alpha * uOpacity);
+}
+<span class="lang">glsl</span></code></pre>
+  </section>
+
+  <section id="colormap">
+    <h3>カラーマッピング（GLSL 内で完結）</h3>
+    <p>全計算をシェーダー内で行うため、CPU-GPU データ転送がゼロ。</p>
+    <div class="tbl">
+      <table>
+        <tr><th>モード</th><th>入力</th><th>グラデーション</th><th>用途</th></tr>
+        <tr><td><code>depth</code></td><td>Y 座標</td><td>深青 → シアン → 白</td><td>水深の可視化</td></tr>
+        <tr><td><code>speed</code></td><td>速度の大きさ</td><td>黒 → 緑 → 黄 → 赤</td><td>流速分布</td></tr>
+        <tr><td><code>heat</code></td><td>速度の大きさ</td><td>暗紫 → 橙</td><td>高エネルギー領域</td></tr>
+        <tr><td><code>ocean</code></td><td>Y 座標</td><td>深青 → ターコイズ</td><td>海洋エフェクト</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="blending">
+    <h3>加算ブレンディング（Additive Blending）</h3>
+    <pre><code>material = <span class="kw">new</span> THREE.<span class="fn">ShaderMaterial</span>({
+    blending:  THREE.AdditiveBlending,  <span class="cm">// 重なると色が加算される</span>
+    depthWrite: <span class="kw">false</span>,               <span class="cm">// Z バッファに書かない（粒子同士のソート不要）</span>
+    transparent: <span class="kw">true</span>,
+});
+<span class="lang">javascript</span></code></pre>
+    <p>粒子が重なるほど輝度が増す。密度の高い領域が自然にハイライトされ、流体らしい視覚効果が得られる。</p>
+  </section>
+
+  <section id="anim">
+    <h3>時間ベースアニメーション制御</h3>
+    <p>
+      <code>requestAnimationFrame</code> の呼び出し間隔は可変（モニタリフレッシュレートやタブの背景化で変動）。
+      経過時間を <em>累積</em> して管理することでフレームスキップ・可変速再生に対応する。
+    </p>
+    <pre><code><span class="cm">// 前フレームからの経過時間を累積</span>
+<span class="kw">this</span>._accTime += dt * <span class="kw">this</span>.playbackSpeed;
+
+<span class="cm">// シミュレーションの 1 フレーム分 (fpsDt) を消費するたびにフレーム更新</span>
+<span class="kw">while</span> (<span class="kw">this</span>._accTime >= fpsDt) {
+    <span class="kw">this</span>._accTime -= fpsDt;
+    <span class="kw">this</span>._updateFrame(nextFrame);   <span class="cm">// GPU バッファを更新</span>
+}
+<span class="lang">javascript</span></code></pre>
+    <div class="box tip">単純に <code>frameIndex = Math.floor(elapsed / fpsDt)</code> とする方法と違い、
+    1 フレームの描画が重くても次のフレームをスキップせず正確に追跡できます。</div>
+  </section>
+
+  <hr />
+
+  <!-- ══ RATIONALE ══ -->
+  <section id="rationale">
+    <h2>⑤ アルゴリズム選定の理由</h2>
+    <div class="tbl">
+      <table>
+        <tr><th>層</th><th>採用アルゴリズム</th><th>選定理由</th></tr>
+        <tr>
+          <td>Python シミュ</td>
+          <td>SPH + Poly6 カーネル<br>Symplectic Euler</td>
+          <td>実装がシンプル、pyjet なしで動作可能。Poly6 は sqrt 不要で高速</td>
+        </tr>
+        <tr>
+          <td>本格シミュ</td>
+          <td>PCISPH / FLIP</td>
+          <td>PCISPH は大 $\Delta t$ で安定。FLIP は粒子・格子の利点を両立</td>
+        </tr>
+        <tr>
+          <td>圧力ソルバー</td>
+          <td>MGPCG</td>
+          <td>$O(N \log N)$ 収束。大解像度格子でも実用的な速度</td>
+        </tr>
+        <tr>
+          <td>液体表面</td>
+          <td>Level Set + FMM</td>
+          <td>分裂・合体などトポロジー変化を自然に扱える</td>
+        </tr>
+        <tr>
+          <td>Neural Fluid モデル</td>
+          <td>Interaction Network (GNN)</td>
+          <td>粒子ベースデータへの最も自然な帰納バイアス。グラフ構造が粒子間相互作用に対応</td>
+        </tr>
+        <tr>
+          <td>近傍探索</td>
+          <td>$O(N^2)$ 全対全（学習時）</td>
+          <td>粒子数 400 程度では GPU の並列演算で十分高速。実装が単純</td>
+        </tr>
+        <tr>
+          <td>最適化</td>
+          <td>Adam + ReduceLROnPlateau</td>
+          <td>適応学習率で安定収束。手動チューニングが少ない</td>
+        </tr>
+        <tr>
+          <td>レンダリング</td>
+          <td>Point Sprite + GLSL シェーダー</td>
+          <td>ジオメトリ不要。数万粒子でも 60fps 以上でリアルタイム描画</td>
+        </tr>
+        <tr>
+          <td>ブレンド</td>
+          <td>Additive Blending</td>
+          <td>Z ソート不要で高速。密度可視化に直感的</td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+</main>
+</div>
+
+<script>
+  // ── sidebar active link tracking ──────────────────
+  const allLinks = document.querySelectorAll('nav a[href^="#"]');
+  const sections = [...document.querySelectorAll('section[id], h2[id], h3[id]')]
+    .filter(el => document.querySelector(`nav a[href="#${el.id}"]`));
+
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      allLinks.forEach(l => l.classList.remove('on'));
+      const a = document.querySelector(`nav a[href="#${e.target.id}"]`);
+      if (a) a.classList.add('on');
+    });
+  }, { rootMargin: '-20% 0px -70% 0px', threshold: 0 });
+
+  sections.forEach(s => obs.observe(s));
+</script>
+</body>
+</html>

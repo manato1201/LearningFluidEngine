@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FluidKit WASM — リアルタイム流体シミュレーター</title>
+  <style>
+    :root {
+      --bg: #07080f; --bg2: #0d0f1c; --border: rgba(80,140,255,0.18);
+      --accent: #4e9eff; --a2: #38d9c0; --text: #d4dff0; --muted: #6a7fa0;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:var(--bg); color:var(--text); font-family:'Segoe UI',sans-serif; overflow:hidden; }
+    #canvas { display:block; width:100vw; height:100vh; }
+
+    /* ── 左パネル ── */
+    #panel {
+      position:fixed; top:16px; left:16px;
+      background:rgba(12,12,24,0.88); backdrop-filter:blur(12px);
+      border:1px solid var(--border); border-radius:12px;
+      padding:16px 18px; width:248px; z-index:10;
+    }
+    #panel h1 { font-size:14px; color:var(--accent); letter-spacing:1px; margin-bottom:14px; }
+    .sec { margin-bottom:14px; }
+    .sec label { font-size:10px; color:var(--muted); text-transform:uppercase;
+                 letter-spacing:.5px; display:block; margin-bottom:5px; }
+    .btn-row { display:flex; gap:5px; flex-wrap:wrap; }
+    button {
+      background:rgba(60,90,160,0.35); border:1px solid rgba(80,140,255,0.28);
+      color:#a8c8ff; border-radius:6px; padding:5px 10px;
+      font-size:12px; cursor:pointer; transition:background .12s;
+    }
+    button:hover { background:rgba(80,120,220,0.55); }
+    button.on { background:rgba(60,160,255,0.4); border-color:#60a0ff; color:#fff; }
+    .row { display:flex; align-items:center; gap:8px; margin-top:5px; }
+    input[type=range] {
+      -webkit-appearance:none; flex:1; height:4px;
+      background:rgba(80,140,255,0.22); border-radius:2px; outline:none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance:none; width:13px; height:13px;
+      background:var(--accent); border-radius:50%; cursor:pointer;
+    }
+    .val { font-size:11px; color:var(--muted); min-width:34px; text-align:right; }
+
+    /* ── 情報 ── */
+    #info {
+      position:fixed; top:16px; right:16px;
+      background:rgba(12,12,24,0.82); backdrop-filter:blur(8px);
+      border:1px solid var(--border); border-radius:10px;
+      padding:10px 14px; font-size:11px; color:var(--muted); line-height:1.8; z-index:10;
+    }
+    #info strong { color:#9ab8e0; }
+
+    /* ── FPS ── */
+    #fps-bar {
+      position:fixed; bottom:16px; right:16px;
+      background:rgba(12,12,24,0.75); border:1px solid var(--border);
+      border-radius:8px; padding:8px 14px; font-size:12px; z-index:10;
+    }
+    #fps-val { color:var(--a2); font-weight:700; }
+
+    /* ── ローディング ── */
+    #loading {
+      position:fixed; inset:0; background:var(--bg);
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      font-size:16px; color:var(--accent); gap:16px; z-index:100;
+    }
+    .spinner {
+      width:40px; height:40px; border:3px solid rgba(78,158,255,.2);
+      border-top-color:var(--accent); border-radius:50%;
+      animation:spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    #loading.hidden { display:none; }
+  </style>
+</head>
+<body>
+
+<!-- ローディング -->
+<div id="loading">
+  <div class="spinner"></div>
+  <div id="load-msg">WASM モジュールを読み込んでいます...</div>
+</div>
+
+<!-- パネル -->
+<div id="panel">
+  <h1>⚡ FluidKit WASM</h1>
+
+  <div class="sec">
+    <label>プリセット</label>
+    <div class="btn-row">
+      <button id="p0" class="on" onclick="setPreset(0)">💧 水滴</button>
+      <button id="p1" onclick="setPreset(1)">💨 煙</button>
+      <button id="p2" onclick="setPreset(2)">🌊 衝突</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <label>粒子数</label>
+    <div class="btn-row">
+      <button onclick="reinit(256)"  id="n256">256</button>
+      <button onclick="reinit(512)"  id="n512" class="on">512</button>
+      <button onclick="reinit(1024)" id="n1024">1024</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <label>重力 Y</label>
+    <div class="row">
+      <input type="range" id="sl-gy" min="-20" max="2" step="0.5" value="-9.8"
+             oninput="setGravity(this.value)"/>
+      <span class="val" id="lbl-gy">-9.8</span>
+    </div>
+  </div>
+
+  <div class="sec">
+    <label>粘性</label>
+    <div class="row">
+      <input type="range" id="sl-mu" min="0" max="0.15" step="0.002" value="0.01"
+             oninput="setViscosity(this.value)"/>
+      <span class="val" id="lbl-mu">0.01</span>
+    </div>
+  </div>
+
+  <div class="sec">
+    <label>剛性（非圧縮性）</label>
+    <div class="row">
+      <input type="range" id="sl-k" min="10" max="200" step="5" value="80"
+             oninput="setStiffness(this.value)"/>
+      <span class="val" id="lbl-k">80</span>
+    </div>
+  </div>
+
+  <div class="sec">
+    <label>粒子サイズ</label>
+    <div class="row">
+      <input type="range" id="sl-size" min="1" max="10" step="0.5" value="4"
+             oninput="setParticleSize(this.value)"/>
+      <span class="val" id="lbl-size">4</span>
+    </div>
+  </div>
+
+  <div class="sec">
+    <label>カラーマップ</label>
+    <div class="btn-row">
+      <button id="cm0" class="on" onclick="setColorMode(0)">深度</button>
+      <button id="cm1" onclick="setColorMode(1)">速度</button>
+      <button id="cm2" onclick="setColorMode(2)">Heat</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="btn-row">
+      <button onclick="togglePause()" id="btn-pause">⏸ 一時停止</button>
+      <button onclick="resetSim()">↺ リセット</button>
+    </div>
+  </div>
+</div>
+
+<!-- 情報 -->
+<div id="info">
+  <strong>粒子数:</strong> <span id="n-count">-</span><br>
+  <strong>Step/Frame:</strong> <span id="steps">2</span><br>
+  <strong>ドラッグ:</strong> 回転 | スクロール: ズーム
+</div>
+
+<div id="fps-bar">FPS: <span id="fps-val">-</span></div>
+<canvas id="canvas"></canvas>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── シェーダー ─────────────────────────────
+const VS = `
+uniform float uSize;
+attribute float aSpeed;
+varying float vSpeed;
+varying float vY;
+void main(){
+  vSpeed=aSpeed; vY=position.y;
+  vec4 mv=modelViewMatrix*vec4(position,1.0);
+  gl_PointSize=uSize*(280.0/-mv.z);
+  gl_Position=projectionMatrix*mv;
+}`;
+const FS = `
+uniform float uOpacity;
+uniform int   uColorMode;
+uniform float uYMin,uYMax;
+varying float vSpeed,vY;
+vec3 cDepth(float t){return mix(mix(vec3(0.02,0.05,0.3),vec3(0.1,0.6,0.9),t),vec3(0.9,0.95,1.),t*t);}
+vec3 cSpeed(float t){
+  if(t<.33)return mix(vec3(.05,.1,.2),vec3(.1,.8,.3),t/.33);
+  if(t<.66)return mix(vec3(.1,.8,.3),vec3(1.,.8,0.),(t-.33)/.33);
+  return mix(vec3(1.,.8,0.),vec3(1.,.1,.05),(t-.66)/.34);}
+vec3 cHeat(float t){return mix(vec3(.05,0.,.1),vec3(1.,.4,0.),t);}
+void main(){
+  vec2 uv=gl_PointCoord-.5; float d=length(uv);
+  if(d>.5) discard;
+  float rim=1.-smoothstep(.28,.5,d);
+  float t;vec3 col;
+  if(uColorMode==1){t=clamp(vSpeed/5.,0.,1.);col=cSpeed(t);}
+  else if(uColorMode==2){t=clamp(vSpeed/3.,0.,1.);col=cHeat(t);}
+  else{float sp=max(uYMax-uYMin,.001);t=clamp((vY-uYMin)/sp,0.,1.);col=cDepth(t);}
+  col+=vec3(.18)*(1.-d/.5);
+  gl_FragColor=vec4(col,rim*uOpacity);
+}`;
+
+// ── Three.js 初期化 ────────────────────────
+const W=window.innerWidth, H=window.innerHeight;
+const renderer=new THREE.WebGLRenderer({canvas:document.getElementById('canvas'),antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(W,H);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x07080f);
+scene.fog=new THREE.Fog(0x07080f,8,20);
+
+const camera=new THREE.PerspectiveCamera(55,W/H,0.001,100);
+camera.position.set(0.5,0.8,2.5);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true; controls.dampingFactor=0.08;
+controls.target.set(0.5,0.5,0.5);
+
+const grid=new THREE.GridHelper(3,12,0x203060,0x182040);
+grid.position.set(0.5,0,0.5); scene.add(grid);
+
+window.addEventListener('resize',()=>{
+  renderer.setSize(window.innerWidth,window.innerHeight);
+  camera.aspect=window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// ── パーティクルシステム ────────────────────
+const MAX_N=4096;
+const posArr=new Float32Array(MAX_N*3);
+const spdArr=new Float32Array(MAX_N);
+const geo=new THREE.BufferGeometry();
+geo.setAttribute('position',new THREE.BufferAttribute(posArr,3));
+geo.setAttribute('aSpeed',  new THREE.BufferAttribute(spdArr,1));
+
+const uniforms={
+  uSize:      {value:4.0},
+  uOpacity:   {value:0.88},
+  uColorMode: {value:0},
+  uYMin:      {value:0.0},
+  uYMax:      {value:1.0},
+};
+const mat=new THREE.ShaderMaterial({
+  uniforms,vertexShader:VS,fragmentShader:FS,
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,
+});
+const points=new THREE.Points(geo,mat);
+scene.add(points);
+
+// ── WASM 状態 ─────────────────────────────
+let wasmModule=null;
+let simPaused=false;
+let currentN=512;
+let currentPreset=0;
+let stepsPerFrame=2;
+let fpsCounter={count:0,last:performance.now(),val:0};
+
+// ── WASM ロード ────────────────────────────
+async function loadWasm(){
+  try {
+    // emcc の MODULARIZE=1 出力は script タグで読み込んでから呼び出す
+    await new Promise((res,rej)=>{
+      const s=document.createElement('script');
+      s.src='sph.js'; s.onload=res; s.onerror=rej;
+      document.head.appendChild(s);
+    });
+    wasmModule = await SphModule();
+
+    // WASM 初期化
+    wasmModule.ccall('sph_init','void',['number','number'],[currentN,currentPreset]);
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('n-count').textContent = currentN;
+    console.log('[FluidKit WASM] ロード完了');
+  } catch(e) {
+    // WASM 未コンパイルの場合は JS フォールバック SPH を使用
+    console.warn('[FluidKit] WASM 未ロード - JS フォールバックで動作:', e.message);
+    startJSFallback();
+  }
+}
+
+// ── JS フォールバック SPH ─────────────────
+// WASM が使えない場合の純粋 JS 実装（軽量版）
+let jsPx,jsPy,jsPz,jsVx,jsVy,jsVz;
+let jsN=0, jsGy=-9.8, jsMu=0.01, jsK=80, jsRho0=1000, jsH=0.12;
+
+function jsKernel(r,h){ if(r>=h)return 0; let q=1-(r*r)/(h*h); return q*q*q; }
+
+function jsInit(n, preset){
+  jsN=n;
+  jsPx=new Float32Array(n); jsPy=new Float32Array(n); jsPz=new Float32Array(n);
+  jsVx=new Float32Array(n); jsVy=new Float32Array(n); jsVz=new Float32Array(n);
+  jsGy=-9.8; jsMu=0.01; jsK=80; jsRho0=1000;
+
+  if(preset===1){ jsGy=0.8; jsMu=0.05; jsK=20; jsRho0=1.2; }
+  if(preset===2){ jsK=100; jsMu=0.005; }
+
+  for(let i=0;i<n;i++){
+    if(preset===0){
+      let placed=false;
+      while(!placed){
+        let x=Math.random()-.5, y=Math.random()-.5, z=Math.random()-.5;
+        if(x*x+y*y+z*z<=.25){
+          jsPx[i]=.5+x*.7; jsPy[i]=.65+y*.6; jsPz[i]=.5+z*.7; placed=true;
+        }
+      }
+    } else if(preset===1){
+      jsPx[i]=.3+Math.random()*.4; jsPy[i]=Math.random()*.2; jsPz[i]=.3+Math.random()*.4;
+      jsVy[i]=.3+Math.random()*.5;
+    } else {
+      let s=i<n/2?-1:1;
+      jsPx[i]=.5+s*(.25+Math.random()*.15);
+      jsPy[i]=Math.random()*.25; jsPz[i]=.3+Math.random()*.4;
+      jsVx[i]=-s*(1.5+Math.random());
+    }
+  }
+}
+
+function jsStep(dt){
+  const rho=new Float32Array(jsN), prs=new Float32Array(jsN);
+  for(let i=0;i<jsN;i++){
+    let r=0;
+    for(let j=0;j<jsN;j++){
+      let dx=jsPx[i]-jsPx[j],dy=jsPy[i]-jsPy[j],dz=jsPz[i]-jsPz[j];
+      r+=jsKernel(Math.sqrt(dx*dx+dy*dy+dz*dz),jsH);
+    }
+    rho[i]=Math.max(r,1e-6); prs[i]=jsK*(rho[i]-jsRho0);
+  }
+  for(let i=0;i<jsN;i++){
+    let ax=0,ay=jsGy,az=0;
+    for(let j=0;j<jsN;j++){
+      if(i===j)continue;
+      let dx=jsPx[i]-jsPx[j],dy=jsPy[i]-jsPy[j],dz=jsPz[i]-jsPz[j];
+      let r=Math.sqrt(dx*dx+dy*dy+dz*dz)+1e-8;
+      if(r>=jsH)continue;
+      let w=jsKernel(r,jsH);
+      let pf=-(prs[i]+prs[j])/(2*rho[j])*w/r;
+      ax+=pf*dx; ay+=pf*dy; az+=pf*dz;
+      let vf=jsMu*w/rho[j];
+      ax+=vf*(jsVx[j]-jsVx[i]); ay+=vf*(jsVy[j]-jsVy[i]); az+=vf*(jsVz[j]-jsVz[i]);
+    }
+    jsVx[i]+=ax*dt; jsVy[i]+=ay*dt; jsVz[i]+=az*dt;
+    jsPx[i]+=jsVx[i]*dt; jsPy[i]+=jsVy[i]*dt; jsPz[i]+=jsVz[i]*dt;
+    const r=0.2;
+    if(jsPx[i]<0){jsPx[i]=0;jsVx[i]*=-r;} if(jsPx[i]>1){jsPx[i]=1;jsVx[i]*=-r;}
+    if(jsPy[i]<0){jsPy[i]=0;jsVy[i]*=-r;} if(jsPy[i]>1){jsPy[i]=1;jsVy[i]*=-r;}
+    if(jsPz[i]<0){jsPz[i]=0;jsVz[i]*=-r;} if(jsPz[i]>1){jsPz[i]=1;jsVz[i]*=-r;}
+  }
+}
+
+function startJSFallback(){
+  document.getElementById('load-msg').textContent='JS モードで動作中（WASM 未コンパイル）';
+  setTimeout(()=>document.getElementById('loading').classList.add('hidden'),1200);
+  jsInit(currentN, currentPreset);
+  document.getElementById('n-count').textContent=currentN;
+}
+
+// ── シーンの更新 ──────────────────────────
+function updateScene(){
+  let n, px, py, pz, vx, vy, vz;
+
+  if(wasmModule){
+    n = wasmModule.ccall('sph_get_particle_count','number',[],[]);
+    const posPtr = wasmModule.ccall('sph_get_positions','number',[],[]);
+    const spdPtr = wasmModule.ccall('sph_get_speeds','number',[],[]);
+    const heap   = wasmModule.HEAPF32;
+    const posOff = posPtr/4, spdOff = spdPtr/4;
+    for(let i=0;i<n;i++){
+      posArr[i*3]  =heap[posOff+i*3];
+      posArr[i*3+1]=heap[posOff+i*3+1];
+      posArr[i*3+2]=heap[posOff+i*3+2];
+      spdArr[i]    =heap[spdOff+i];
+    }
+    geo.setDrawRange(0,n);
+  } else {
+    n=jsN;
+    for(let i=0;i<n;i++){
+      posArr[i*3]=jsPx[i]; posArr[i*3+1]=jsPy[i]; posArr[i*3+2]=jsPz[i];
+      spdArr[i]=Math.hypot(jsVx[i],jsVy[i],jsVz[i]);
+    }
+    geo.setDrawRange(0,n);
+  }
+
+  geo.getAttribute('position').needsUpdate=true;
+  geo.getAttribute('aSpeed').needsUpdate=true;
+}
+
+// ── アニメーションループ ──────────────────
+const DT=0.016;
+function animate(){
+  requestAnimationFrame(animate);
+  if(!simPaused){
+    for(let s=0;s<stepsPerFrame;s++){
+      if(wasmModule) wasmModule.ccall('sph_step','void',['number'],[DT]);
+      else           jsStep(DT);
+    }
+    updateScene();
+    // FPS
+    fpsCounter.count++;
+    const now=performance.now();
+    if(now-fpsCounter.last>=500){
+      fpsCounter.val=Math.round(fpsCounter.count*1000/(now-fpsCounter.last));
+      fpsCounter.count=0; fpsCounter.last=now;
+      document.getElementById('fps-val').textContent=fpsCounter.val;
+    }
+  }
+  controls.update();
+  renderer.render(scene,camera);
+}
+
+// ── UI コールバック（グローバル公開）─────
+window.setPreset=(p)=>{
+  currentPreset=p;
+  ['p0','p1','p2'].forEach((id,i)=>
+    document.getElementById(id).classList.toggle('on',i===p));
+  window.reinit(currentN);
+};
+window.reinit=(n)=>{
+  currentN=n;
+  ['n256','n512','n1024'].forEach((id,v)=>
+    document.getElementById(id).classList.toggle('on',
+      document.getElementById(id).textContent==String(n)));
+  if(wasmModule) wasmModule.ccall('sph_init','void',['number','number'],[n,currentPreset]);
+  else           jsInit(n,currentPreset);
+  document.getElementById('n-count').textContent=n;
+};
+window.setGravity=(v)=>{
+  document.getElementById('lbl-gy').textContent=parseFloat(v).toFixed(1);
+  if(wasmModule) wasmModule.ccall('sph_set_gravity','void',['number','number','number'],[0,+v,0]);
+  else           jsGy=+v;
+};
+window.setViscosity=(v)=>{
+  document.getElementById('lbl-mu').textContent=parseFloat(v).toFixed(3);
+  if(wasmModule) wasmModule.ccall('sph_set_viscosity','void',['number'],[+v]);
+  else           jsMu=+v;
+};
+window.setStiffness=(v)=>{
+  document.getElementById('lbl-k').textContent=v;
+  if(wasmModule) wasmModule.ccall('sph_set_stiffness','void',['number'],[+v]);
+  else           jsK=+v;
+};
+window.setParticleSize=(v)=>{
+  uniforms.uSize.value=+v;
+  document.getElementById('lbl-size').textContent=v;
+};
+window.setColorMode=(m)=>{
+  uniforms.uColorMode.value=m;
+  ['cm0','cm1','cm2'].forEach((id,i)=>
+    document.getElementById(id).classList.toggle('on',i===m));
+};
+window.togglePause=()=>{
+  simPaused=!simPaused;
+  document.getElementById('btn-pause').textContent=simPaused?'▶ 再生':'⏸ 一時停止';
+};
+window.resetSim=()=>window.reinit(currentN);
+
+// ── 起動 ─────────────────────────────────
+loadWasm();
+animate();
+</script>
+</body>
+</html>

@@ -1,0 +1,1667 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FluidKit 完全講義資料 — 流体エフェクトパイプラインを一から作る</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<script>MathJax = { tex: { inlineMath: [['$','$']] }, svg: { fontCache: 'global' } };</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+:root {
+  --bg: #0d1117;
+  --bg2: #161b22;
+  --bg3: #21262d;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text2: #8b949e;
+  --accent: #58a6ff;
+  --accent2: #79c0ff;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --orange: #ffa657;
+  --sidebar-w: 280px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; line-height: 1.7; }
+
+/* ── SIDEBAR ── */
+#sidebar {
+  position: fixed; top: 0; left: 0; width: var(--sidebar-w);
+  height: 100vh; background: var(--bg2); border-right: 1px solid var(--border);
+  overflow-y: auto; padding: 16px 0; z-index: 100;
+}
+#sidebar .logo {
+  padding: 12px 20px 20px;
+  font-size: 13px; font-weight: 700; color: var(--accent);
+  border-bottom: 1px solid var(--border); margin-bottom: 8px;
+  letter-spacing: .5px;
+}
+#sidebar .logo span { display: block; font-size: 11px; color: var(--text2); font-weight: 400; margin-top: 4px; }
+#sidebar nav a {
+  display: block; padding: 6px 20px; color: var(--text2); text-decoration: none;
+  font-size: 13px; transition: all .15s; border-left: 3px solid transparent;
+}
+#sidebar nav a:hover { color: var(--text); background: var(--bg3); }
+#sidebar nav a.active { color: var(--accent); border-left-color: var(--accent); background: rgba(88,166,255,.08); }
+#sidebar nav .section-title {
+  padding: 14px 20px 4px; font-size: 11px; font-weight: 700;
+  color: var(--text2); text-transform: uppercase; letter-spacing: 1px;
+}
+#sidebar nav a.sub { padding-left: 32px; font-size: 12px; }
+
+/* ── MAIN ── */
+#main { margin-left: var(--sidebar-w); padding: 48px 64px; max-width: 1100px; }
+@media (max-width: 900px) { #sidebar { display: none; } #main { margin-left: 0; padding: 24px 20px; } }
+
+/* ── HEADINGS ── */
+h1 { font-size: 2.2rem; font-weight: 800; color: var(--text); margin-bottom: 12px; }
+h1 .tag { font-size: .9rem; font-weight: 400; color: var(--accent); background: rgba(88,166,255,.1); padding: 2px 10px; border-radius: 20px; margin-left: 12px; vertical-align: middle; }
+h2 { font-size: 1.6rem; font-weight: 700; color: var(--text); margin: 56px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+h2 .phase-badge { display: inline-block; font-size: .75rem; font-weight: 700; padding: 2px 10px; border-radius: 20px; margin-right: 10px; vertical-align: middle; }
+.badge-blue   { background: rgba(88,166,255,.2);  color: var(--accent); }
+.badge-green  { background: rgba(63,185,80,.2);   color: var(--green); }
+.badge-yellow { background: rgba(210,153,34,.2);  color: var(--yellow); }
+.badge-purple { background: rgba(188,140,255,.2); color: var(--purple); }
+.badge-orange { background: rgba(255,166,87,.2);  color: var(--orange); }
+.badge-red    { background: rgba(248,81,73,.2);   color: var(--red); }
+h3 { font-size: 1.15rem; font-weight: 700; color: var(--accent2); margin: 32px 0 10px; }
+h4 { font-size: 1rem; font-weight: 700; color: var(--text); margin: 20px 0 8px; }
+
+/* ── TEXT ── */
+p { margin-bottom: 14px; color: var(--text); }
+.lead { font-size: 1.1rem; color: var(--text2); margin-bottom: 24px; line-height: 1.8; }
+strong { color: var(--accent2); }
+code { background: var(--bg3); color: var(--orange); padding: 2px 6px; border-radius: 4px; font-size: .88em; font-family: 'Cascadia Code', 'Consolas', monospace; }
+
+/* ── CODE BLOCKS ── */
+.code-block { position: relative; margin: 20px 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+.code-block .code-header { background: var(--bg3); padding: 8px 16px; font-size: 12px; color: var(--text2); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.code-block .code-header .lang { color: var(--accent); font-weight: 600; }
+.code-block pre { margin: 0; background: #0d1117 !important; }
+.code-block pre code { font-size: 13px; line-height: 1.6; }
+
+/* ── CALLOUT ── */
+.callout { padding: 16px 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid; }
+.callout-info  { background: rgba(88,166,255,.08); border-color: var(--accent); }
+.callout-warn  { background: rgba(210,153,34,.08); border-color: var(--yellow); }
+.callout-tip   { background: rgba(63,185,80,.08);  border-color: var(--green); }
+.callout-error { background: rgba(248,81,73,.08);  border-color: var(--red); }
+.callout-title { font-weight: 700; margin-bottom: 6px; font-size: .9rem; }
+.callout-info  .callout-title { color: var(--accent); }
+.callout-warn  .callout-title { color: var(--yellow); }
+.callout-tip   .callout-title { color: var(--green); }
+.callout-error .callout-title { color: var(--red); }
+
+/* ── CARDS ── */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin: 20px 0; }
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 20px; transition: border-color .2s; }
+.card:hover { border-color: var(--accent); }
+.card h4 { color: var(--accent); margin: 0 0 8px; }
+.card p { font-size: 13px; color: var(--text2); margin: 0; }
+
+/* ── TABLE ── */
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
+th { background: var(--bg3); color: var(--accent2); padding: 10px 14px; text-align: left; border-bottom: 2px solid var(--border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text); }
+tr:hover td { background: rgba(255,255,255,.02); }
+
+/* ── DIAGRAM ── */
+.diagram-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+.diagram-box pre { color: var(--text2); font-size: 13px; line-height: 1.6; font-family: 'Cascadia Code', monospace; margin: 0; }
+
+/* ── STEP LIST ── */
+.steps { counter-reset: step; list-style: none; margin: 16px 0; }
+.steps li { position: relative; padding: 16px 16px 16px 56px; margin-bottom: 12px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; counter-increment: step; }
+.steps li::before { content: counter(step); position: absolute; left: 16px; top: 14px; width: 28px; height: 28px; background: var(--accent); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
+.steps li strong { color: var(--accent2); display: block; margin-bottom: 4px; }
+
+/* ── FORMULA ── */
+.formula-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0; }
+.formula-box .mjx-container { font-size: 1.1em !important; }
+.formula-label { font-size: 12px; color: var(--text2); margin-top: 8px; }
+
+/* ── HIGHLIGHT ── */
+.hl-green  { color: var(--green);  font-weight: 600; }
+.hl-yellow { color: var(--yellow); font-weight: 600; }
+.hl-red    { color: var(--red);    font-weight: 600; }
+.hl-blue   { color: var(--accent); font-weight: 600; }
+.hl-purple { color: var(--purple); font-weight: 600; }
+
+/* ── HERO ── */
+.hero { background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #0d1117 100%); border: 1px solid var(--border); border-radius: 16px; padding: 48px; margin-bottom: 48px; text-align: center; }
+.hero h1 { font-size: 2.8rem; background: linear-gradient(135deg, #58a6ff, #bc8cff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.hero .subtitle { font-size: 1.15rem; color: var(--text2); margin: 16px 0 24px; }
+.tag-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.tag-row span { background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 4px 14px; font-size: 12px; color: var(--text2); }
+
+/* ── MINI FLOW ── */
+.flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+.flow-node { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; color: var(--accent2); }
+.flow-arrow { color: var(--text2); font-size: 18px; }
+
+/* ── PROGRESS ── */
+.progress-row { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
+.progress-label { min-width: 80px; font-size: 13px; color: var(--text2); }
+.progress-bar { flex: 1; height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 4px; }
+.progress-val { font-size: 13px; font-weight: 700; min-width: 55px; text-align: right; }
+
+/* ── TOC COUNTER ── */
+.toc-num { color: var(--text2); margin-right: 6px; }
+
+/* ── SCROLL ── */
+html { scroll-behavior: smooth; }
+section { scroll-margin-top: 24px; }
+
+/* ── FOOTER ── */
+.page-footer { margin-top: 80px; padding: 32px 0; border-top: 1px solid var(--border); color: var(--text2); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ SIDEBAR -->
+<div id="sidebar">
+  <div class="logo">⚡ FluidKit 講義資料<span>流体エフェクトパイプライン全解説</span></div>
+  <nav>
+    <div class="section-title">はじめに</div>
+    <a href="#overview">システム全体像</a>
+    <a href="#architecture">アーキテクチャ設計</a>
+    <a href="#folder">フォルダ構造</a>
+    <a href="#dataflow">データフロー</a>
+
+    <div class="section-title">Phase 1 — Python SPH</div>
+    <a href="#sph-theory">SPH 理論</a>
+    <a href="#sph-kernel">カーネル関数</a>
+    <a href="#sph-step">シミュレーションステップ</a>
+    <a href="#sph-code">コード全解説</a>
+    <a href="#sph-presets">プリセット設計</a>
+
+    <div class="section-title">Phase 2 — Three.js Viewer</div>
+    <a href="#viewer-arch">UI アーキテクチャ</a>
+    <a href="#viewer-shader">GLSL シェーダー</a>
+    <a href="#viewer-data">データ形式（JSON）</a>
+    <a href="#viewer-ops">操作 & カラーモード</a>
+
+    <div class="section-title">Phase 3 — C++ SPH</div>
+    <a href="#cpp-diff">Python との違い</a>
+    <a href="#cpp-pcisph">PCISPH アルゴリズム</a>
+    <a href="#cpp-convert">XYZ → JSON 変換</a>
+
+    <div class="section-title">Phase 4 — Blender</div>
+    <a href="#blender-mcp">MCP 連携</a>
+    <a href="#blender-pipeline">パイプライン構成</a>
+
+    <div class="section-title">Phase 5 — WebAssembly</div>
+    <a href="#wasm-why">なぜ WASM か</a>
+    <a href="#wasm-cpp">C++ API 設計</a>
+    <a href="#wasm-js">JavaScript 連携</a>
+    <a href="#wasm-build">ビルド方法</a>
+
+    <div class="section-title">Phase 6 — Neural Fluid</div>
+    <a href="#nn-overview">GNN 概要</a>
+    <a href="#nn-dataset">データセット設計</a>
+    <a href="#nn-model-v1">モデル v1</a>
+    <a href="#nn-model-v2">モデル v2/v3</a>
+    <a href="#nn-train">訓練パイプライン</a>
+    <a href="#nn-bugs">バグ & 修正の記録</a>
+    <a href="#nn-infer">推論 & ロールアウト</a>
+
+    <div class="section-title">設計パターン</div>
+    <a href="#patterns-norm">正規化設計</a>
+    <a href="#patterns-loss">損失関数設計</a>
+    <a href="#patterns-mvp">MVP 開発戦略</a>
+  </nav>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ MAIN -->
+<div id="main">
+
+<!-- ── HERO -->
+<div class="hero">
+  <h1>FluidKit 完全講義資料</h1>
+  <p class="subtitle">流体シミュレーション × AI × WebAssembly × Blender<br>エフェクトパイプラインを一から作る実践ガイド</p>
+  <div class="tag-row">
+    <span>🐍 Python SPH</span>
+    <span>🧠 Graph Neural Network</span>
+    <span>⚡ WebAssembly</span>
+    <span>🎨 Three.js</span>
+    <span>🎬 Blender MCP</span>
+    <span>🔧 C++</span>
+    <span>🔥 PyTorch</span>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     SECTION 0 — OVERVIEW
+═══════════════════════════════════════════════════════════ -->
+<section id="overview">
+<h2>システム全体像</h2>
+
+<p class="lead">
+FluidKit は「流体エフェクトを手軽に作成し、複数のツールに簡単に連携・挿入できる」ことを目標に設計した、
+<strong>6 フェーズ構成のプロダクションパイプライン</strong>です。
+物理シミュレーション・リアルタイムレンダリング・機械学習・ネイティブコード・3D ツール連携を
+すべてゼロから作り上げています。
+</p>
+
+<div class="card-grid">
+  <div class="card">
+    <h4>⚗️ Phase 1 — Python SPH</h4>
+    <p>純 Python の軽量流体シミュレーター。外部ライブラリゼロで Poly6 カーネル + Symplectic Euler を実装。3 プリセット対応。</p>
+  </div>
+  <div class="card">
+    <h4>🎨 Phase 2 — Three.js Viewer</h4>
+    <p>ブラウザで動く 3D パーティクル Viewer。カスタム GLSL Point Sprite シェーダー + Additive Blending。4 カラーモード。</p>
+  </div>
+  <div class="card">
+    <h4>🔬 Phase 3 — C++ SPH</h4>
+    <p>fluid-engine-dev の PCISPH ソルバー。8000+ 粒子で研究品質のシミュレーション。XYZ 形式の自動検出付き変換ツール。</p>
+  </div>
+  <div class="card">
+    <h4>🎬 Phase 4 — Blender</h4>
+    <p>MCP 経由で Blender を自動操作。SPH データをアニメーションとして読み込み、HDRI 照明 + マテリアルで映像制作品質にレンダリング。</p>
+  </div>
+  <div class="card">
+    <h4>⚡ Phase 5 — WebAssembly</h4>
+    <p>C++ SPH を Emscripten で 3.3KB の WASM にコンパイル。ブラウザ上でリアルタイム物理演算 + パラメータ調整。</p>
+  </div>
+  <div class="card">
+    <h4>🧠 Phase 6 — Neural Fluid</h4>
+    <p>Graph Neural Network（Interaction Network）で流体挙動を学習。100 シム × 9900 サンプルで訓練、GNN が物理演算を近似。</p>
+  </div>
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">💡 このプロジェクトで学べること</div>
+  物理シミュレーションの数学・アルゴリズム実装 / PyTorch での GNN 設計と学習の失敗・修正サイクル / C++ → WASM のコンパイルと JS 連携 / Blender を API として操作するプログラマブルパイプライン / リアルタイム 3D レンダリング（GLSL シェーダー）
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     ARCHITECTURE
+═══════════════════════════════════════════════════════════ -->
+<section id="architecture">
+<h2>アーキテクチャ設計</h2>
+
+<p>FluidKit のアーキテクチャは「<strong>データフォーマットによる疎結合</strong>」を中心に設計されています。
+各フェーズは独立しており、<code>frames.json</code> という共通フォーマットを通じて連携します。</p>
+
+<h3>設計原則</h3>
+<div class="card-grid">
+  <div class="card">
+    <h4>疎結合（Decoupling）</h4>
+    <p>各フェーズは JSON/NPZ ファイルを介して通信。Python が停止していても Viewer は動く。</p>
+  </div>
+  <div class="card">
+    <h4>漸進的強化（Progressive Enhancement）</h4>
+    <p>Phase 1 だけでも動く。Phase 6 を追加すれば AI 化できる。各層を独立して差し替え可能。</p>
+  </div>
+  <div class="card">
+    <h4>再現可能性（Reproducibility）</h4>
+    <p>シード値・パラメータをすべて記録。同じ入力から同じ出力を保証。</p>
+  </div>
+  <div class="card">
+    <h4>スケーラビリティ</h4>
+    <p>粒子数・フレーム数・シミュレーション数をすべてパラメータ化。小規模で動いたら数を増やすだけ。</p>
+  </div>
+</div>
+
+<h3>レイヤー構成</h3>
+<div class="diagram-box">
+<pre>
+┌──────────────────────────────────────────────────────────────────┐
+│                    FluidKit システムレイヤー                        │
+├───────────────────┬──────────────────────────────────────────────┤
+│ Presentation      │  viewer/index.html (Three.js)                 │
+│                   │  wasm/fluid_wasm.html (WASM Viewer)           │
+│                   │  Blender (EEVEE/Cycles レンダリング)            │
+├───────────────────┼──────────────────────────────────────────────┤
+│ Application       │  infer_v2.py (Neural Fluid 推論)              │
+│                   │  xyz_to_json.py (フォーマット変換)              │
+│                   │  blender_export.py (Blender用変換)             │
+├───────────────────┼──────────────────────────────────────────────┤
+│ Domain (ML)       │  train_v2.py / model_v2.py (GNN訓練)          │
+│                   │  collect_data.py (データ生成・正規化)            │
+├───────────────────┼──────────────────────────────────────────────┤
+│ Domain (Physics)  │  gen_sample.py (Python SPH)                   │
+│                   │  sph_wasm.cpp (C++ SPH / WASM)                │
+│                   │  fluid-engine-dev (PCISPH C++)                │
+├───────────────────┼──────────────────────────────────────────────┤
+│ Data (Files)      │  frames.json / *.npy / *.xyz / *.npz          │
+│                   │  checkpoints/*.pt / meta.json                  │
+└───────────────────┴──────────────────────────────────────────────┘
+</pre>
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     FOLDER STRUCTURE
+═══════════════════════════════════════════════════════════ -->
+<section id="folder">
+<h2>フォルダ構造</h2>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Directory Tree</span><span>FluidKit/</span></div>
+  <pre><code class="language-plaintext">FluidKit/
+├── viewer/
+│   ├── index.html          ← Three.js Viewer（完全自己完結HTML）
+│   └── data/               ← 生成済みJSONデータ（gitignore対象）
+│       ├── water_drop.json
+│       ├── smoke.json
+│       ├── splash.json
+│       ├── sph_real.json   ← C++ SPH出力（58MB）
+│       └── neural_v2_water_drop.json ← Neural Fluid予測結果
+│
+├── tools/
+│   ├── gen_sample.py       ← Python SPHシミュレーター（pyjet不要）
+│   ├── xyz_to_json.py      ← XYZ/POS → frames.json コンバーター
+│   └── blender_export.py   ← XYZ → NPZ（Blender連携用）
+│
+├── neural/
+│   ├── collect_data.py     ← データセット生成（100シム×9900サンプル）
+│   ├── model.py            ← GNN v1（Interaction Network, 184K params）
+│   ├── model_v2.py         ← GNN v2/v3（GlobalContext, 1.13M params）
+│   ├── train.py            ← v1 訓練スクリプト（シンプル版）
+│   ├── train_v2.py         ← v2/v3 訓練（AMP + CosineAnnealing）
+│   ├── infer_to_json.py    ← v1 推論 → JSON
+│   ├── infer_v2.py         ← v2/v3 推論（速度正規化対応）
+│   ├── dataset_v2/         ← 学習データ（gitignore対象, ~160MB）
+│   │   ├── X_train.npy     #  shape (8415, 400, 6)
+│   │   ├── Y_train.npy     #  shape (8415, 400, 3)
+│   │   ├── X_val.npy
+│   │   ├── Y_val.npy
+│   │   └── meta.json       #  vel_std, pos_min, pos_max etc.
+│   └── checkpoints_v3/     ← モデル重み（gitignore対象）
+│       ├── best.pt         #  best_val=0.097
+│       └── last.pt
+│
+├── wasm/
+│   ├── sph_wasm.cpp        ← SPH C++（外部依存ゼロ, MAX_N=4096）
+│   ├── sph.wasm            ← Emscriptenコンパイル済み（3.3KB）
+│   ├── sph.js              ← グルーコード（12KB, JS↔WASM橋渡し）
+│   ├── fluid_wasm.html     ← リアルタイムWASM Viewer
+│   └── serve.py            ← COOP/COEP対応HTTPサーバー（port 8765）
+│
+├── blender/
+│   ├── mcp_setup.py        ← Blender MCP 6チャンク分割スクリプト
+│   ├── setup_scene.py      ← シーン自動構築（カメラ・ライト・マテリアル）
+│   ├── render_to_gif.py    ← PNG連番 → GIF/MP4 変換
+│   └── fluid_data.npz      ← 粒子データ（gitignore対象, 6.4MB）
+│
+└── docs/
+    ├── index.html          ← プロジェクトドキュメント
+    ├── algorithms.html     ← SPH・GNN数式解説（MathJax）
+    └── lecture.html        ← ★本ファイル★
+</code></pre>
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">📌 設計の意図</div>
+  <strong>gitignore で大容量ファイルを除外し、コードだけをバージョン管理する</strong>のが重要な設計判断です。
+  <code>*.npy</code>（学習データ）・<code>*.pt</code>（モデル重み）・<code>viewer/data/*.json</code>（生成データ）・
+  <code>blender/render/</code>（レンダリング画像）は全てスクリプトで再生成可能なため、リポジトリには含めません。
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     DATA FLOW
+═══════════════════════════════════════════════════════════ -->
+<section id="dataflow">
+<h2>データフロー</h2>
+
+<div class="diagram-box">
+<pre>
+                    ┌─────────────────────────────────────────────────┐
+                    │              入力ソース                           │
+                    └──────────────┬──────────────────────────────────┘
+                                   │
+            ┌──────────────────────┼────────────────────────┐
+            ▼                      ▼                         ▼
+   ┌─────────────────┐   ┌──────────────────┐   ┌───────────────────┐
+   │ gen_sample.py   │   │ sph_sim.exe      │   │ collect_data.py   │
+   │ (Python SPH)    │   │ (C++ PCISPH)     │   │ (大量シミュ実行)   │
+   └────────┬────────┘   └────────┬─────────┘   └─────────┬─────────┘
+            │                     │                         │
+            │ frames.json         │ *.xyz ファイル           │ X/Y .npy
+            ▼                     ▼                         ▼
+   ┌─────────────────┐   ┌──────────────────┐   ┌───────────────────┐
+   │ viewer/data/    │   │ xyz_to_json.py   │   │ train_v2.py       │
+   │ water_drop.json │   │ (自動フォーマット  │   │ (GNN 訓練)        │
+   │ smoke.json      │   │  検出)           │   └─────────┬─────────┘
+   │ splash.json     │   └────────┬─────────┘             │
+   └────────┬────────┘            │ sph_real.json          │ best.pt
+            │                     ▼                         ▼
+            │            ┌────────────────────┐  ┌──────────────────┐
+            │            │  viewer/data/       │  │  infer_v2.py     │
+            │            │  sph_real.json      │  │  (推論ロールアウト) │
+            │            └────────┬────────────┘  └─────────┬────────┘
+            │                     │                           │ neural_v2.json
+            └──────────────────── │ ──────────────────────────┘
+                                   │
+                    ┌──────────────▼──────────────────────────┐
+                    │          viewer/index.html               │
+                    │     (Three.js 3D パーティクル Viewer)     │
+                    └─────────────────────────────────────────┘
+
+   ┌──────────────────────────────────────────────────────────┐
+   │ 別ルート                                                   │
+   │                                                            │
+   │  sph_wasm.cpp ──emcc──▶ sph.wasm ──▶ fluid_wasm.html     │
+   │  (リアルタイム演算ルート)                                    │
+   │                                                            │
+   │  blender_export.py ──▶ fluid_data.npz ──▶ Blender MCP    │
+   │  (映像制作ルート)                                           │
+   └──────────────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<h3>共通データフォーマット — frames.json</h3>
+<p>全フェーズが共通して生成・消費するフォーマットです。Viewer はこれさえあれば動きます。</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">JSON Schema</span><span>frames.json</span></div>
+  <pre><code class="language-json">{
+  "metadata": {
+    "preset": "water_drop",         // データの種類
+    "description": "球形水滴落下",   // 人間向け説明
+    "frameCount": 120,              // フレーム総数
+    "particleCount": 1500,          // 粒子数
+    "fps": 30,                      // 再生フレームレート
+    "dt": 0.016,                    // シミュレーション時間刻み
+    "bounds": {
+      "min": [-1.5, 0.0, -1.5],    // シミュレーション空間の最小座標
+      "max": [ 1.5, 3.0,  1.5]     // シミュレーション空間の最大座標
+    }
+  },
+  "frames": [
+    // フレーム 0: [x0,y0,z0, x1,y1,z1, ..., xN,yN,zN]
+    [0.123, 2.100, -0.045, 0.456, 1.987, 0.123, ...],
+    // フレーム 1
+    [0.124, 2.088, -0.043, 0.458, 1.971, 0.125, ...],
+    // ... frameCount 個のフレーム
+  ],
+  "speeds": [
+    // オプション: 各フレームの各粒子の速度スカラー
+    [0.05, 0.12, 0.08, ...],
+    ...
+  ]
+}
+</code></pre>
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">📐 フォーマット設計の理由</div>
+  フラット配列 <code>[x0,y0,z0, x1,y1,z1, ...]</code> を選んだのは、<strong>Three.js の BufferGeometry に直接渡せる</strong>からです。
+  オブジェクト配列 <code>[{x,y,z}, ...]</code> にするとパース時間が 3〜5 倍に増加します。
+  大容量データは JSON より NPY/NPZ の方が効率的ですが、ブラウザ互換性のため JSON を採用しています。
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     PHASE 1 — SPH THEORY
+═══════════════════════════════════════════════════════════ -->
+<section id="sph-theory">
+<h2><span class="phase-badge badge-blue">Phase 1</span>SPH 理論の基礎</h2>
+
+<p class="lead">
+SPH（Smoothed Particle Hydrodynamics）は1977年に天体物理学のために開発された
+粒子ベースの数値流体力学手法です。メッシュを使わず、流体を有限個の「粒子」として表現します。
+</p>
+
+<h3>なぜ粒子ベースか？</h3>
+
+<table>
+  <tr><th>手法</th><th>特徴</th><th>向いている用途</th></tr>
+  <tr><td><strong>格子法（Eulerian）</strong></td><td>固定グリッド上で流体を計算</td><td>風洞実験・気象シミュレーション</td></tr>
+  <tr><td><strong>SPH（Lagrangian）</strong></td><td>流体とともに粒子が移動</td><td>水しぶき・破砕・自由表面流れ</td></tr>
+  <tr><td><strong>FLIP/PIC</strong></td><td>格子と粒子のハイブリッド</td><td>ゲームエンジンの流体（Houdini等）</td></tr>
+</table>
+
+<h3>SPH の基本アイデア</h3>
+<p>連続した流体を <strong>N 個の粒子</strong>で近似します。ある粒子 $i$ の物理量 $A$ は、
+周囲の粒子 $j$ の値を「スムージングカーネル」で重み付けした和として計算します：</p>
+
+<div class="formula-box">
+  $$A(\mathbf{r}_i) = \sum_j \frac{m_j}{\rho_j} A_j \, W(|\mathbf{r}_i - \mathbf{r}_j|, h)$$
+  <div class="formula-label">SPH 補間式。$W$ はカーネル関数、$h$ はカーネル半径（影響範囲）</div>
+</div>
+</section>
+
+<section id="sph-kernel">
+<h3>カーネル関数（Poly6）</h3>
+
+<p>FluidKit では最もポピュラーな <strong>Poly6 カーネル</strong>を使用しています。
+距離 $r$ が $h$（カーネル半径）以内の粒子だけが影響し、距離が離れるほど滑らかにゼロに近づきます：</p>
+
+<div class="formula-box">
+  $$W(r, h) = \begin{cases} \left(1 - \frac{r^2}{h^2}\right)^3 & (r < h) \\ 0 & (r \geq h) \end{cases}$$
+  <div class="formula-label">Poly6 カーネル。$r$ は粒子間距離、$h$ はカーネル半径</div>
+</div>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>gen_sample.py — Poly6 カーネル</span></div>
+  <pre><code class="language-python">def _kernel(r, h):
+    """Poly6 kernel (smoothed weight).
+
+    r: 粒子間距離
+    h: カーネル半径（影響範囲）
+    戻り値: 重み（0〜1）
+    """
+    if r >= h:
+        return 0.0           # 影響範囲外はゼロ
+    q = 1.0 - (r / h) ** 2  # 距離が離れるほど小さくなる
+    return q * q * q         # 3乗でゼロに近づく（C² 連続）</code></pre>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ C² 連続性が重要な理由</div>
+  カーネルは 2 階微分（圧力項・粘性項の計算）に使われます。
+  カーネルが $C^2$（2回連続微分可能）でないと、力の計算で数値的不安定が起きます。
+  Poly6 は $r=h$ で $W=0$, $W'=0$, $W''=0$ となるため安定です。
+</div>
+</section>
+
+<section id="sph-step">
+<h3>シミュレーションの 1 ステップ</h3>
+
+<p>各タイムステップで以下の順に計算します：</p>
+
+<ol class="steps">
+  <li>
+    <strong>密度計算</strong>
+    粒子 $i$ の密度を周囲粒子からカーネルで集計します。
+    <div class="formula-box" style="margin:10px 0">
+      $$\rho_i = \sum_j W(|\mathbf{r}_i - \mathbf{r}_j|, h)$$
+    </div>
+  </li>
+  <li>
+    <strong>圧力計算（Tait EOS）</strong>
+    密度と「静止密度」の差から圧力を求めます。$k$ は剛性係数（stiffness）：
+    <div class="formula-box" style="margin:10px 0">
+      $$p_i = k(\rho_i - \rho_0)$$
+    </div>
+    密度 &gt; 静止密度 → 圧力 &gt; 0 → 粒子を押し広げる。密度 &lt; 静止密度 → 引き戻す。
+  </li>
+  <li>
+    <strong>加速度計算（Navier-Stokes）</strong>
+    重力 + 圧力勾配力 + 粘性力 を足し合わせます：
+    <div class="formula-box" style="margin:10px 0">
+      $$\mathbf{a}_i = \mathbf{g} + \sum_j \left[ -\frac{p_i + p_j}{2\rho_j} \frac{W}{r} \mathbf{r}_{ij} + \frac{\mu}{\rho_j} W (\mathbf{v}_j - \mathbf{v}_i) \right]$$
+    </div>
+  </li>
+  <li>
+    <strong>積分（Symplectic Euler）</strong>
+    速度を先に更新し、その速度で位置を更新します（エネルギー保存性が高い）：
+    <div class="formula-box" style="margin:10px 0">
+      $$\mathbf{v}_i^{t+1} = \mathbf{v}_i^t + \Delta t \cdot \mathbf{a}_i$$
+      $$\mathbf{r}_i^{t+1} = \mathbf{r}_i^t + \Delta t \cdot \mathbf{v}_i^{t+1}$$
+    </div>
+  </li>
+  <li>
+    <strong>境界処理（AABB 反射）</strong>
+    境界を越えた粒子を押し戻し、速度を反転 × 反発係数で減衰させます。
+  </li>
+</ol>
+</section>
+
+<section id="sph-code">
+<h3>コード全解説 — SimpleSPH クラス</h3>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>gen_sample.py — SimpleSPH.step()</span></div>
+  <pre><code class="language-python">def step(self, dt: float = 0.016):
+    h, k, rho0, mu = self.h, self.k, self.rho0, self.mu
+    n = self.n
+    pos, vel = self.pos, self.vel
+
+    # ───── Step 1: 密度・圧力 ─────
+    densities = [self._density(i) for i in range(n)]
+    pressures = [k * (d - rho0) for d in densities]
+    #            └───────────────┘ Tait EOS
+    #            密度が静止密度より高ければ正の圧力（押し広げる力）
+
+    # ───── Step 2: 加速度 ─────
+    acc = [[gx, gy, gz] for gx, gy, gz in [self.g] * n]
+    #      ↑ まず重力で初期化
+
+    for i in range(n):
+        pi = pos[i]
+        for j in range(n):        # O(N²) — 小規模では問題なし
+            if i == j: continue
+            pj = pos[j]
+            dx = pi[0]-pj[0]; dy = pi[1]-pj[1]; dz = pi[2]-pj[2]
+            r = math.sqrt(dx*dx + dy*dy + dz*dz) + 1e-8  # ゼロ除算防止
+            if r >= h: continue   # カーネル半径外はスキップ（スパース性を活用）
+
+            w = _kernel(r, h)
+
+            # 圧力勾配力（両粒子の平均圧力を使う対称形式）
+            pf = -(pressures[i] + pressures[j]) / (2.0 * densities[j]) * w / r
+            acc[i][0] += pf * dx   # x成分
+            acc[i][1] += pf * dy   # y成分
+            acc[i][2] += pf * dz   # z成分
+
+            # 粘性力（速度差を滑らかにする拡散項）
+            dvx = vel[j][0]-vel[i][0]
+            dvy = vel[j][1]-vel[i][1]
+            dvz = vel[j][2]-vel[i][2]
+            vf = mu * w / densities[j]
+            acc[i][0] += vf * dvx
+            acc[i][1] += vf * dvy
+            acc[i][2] += vf * dvz
+
+    # ───── Step 3: 積分 (Symplectic Euler) ─────
+    xlo, xhi, ylo, yhi, zlo, zhi = self.bounds
+    restitution = 0.3  # 反発係数（0.3 = 70%エネルギー損失）
+
+    for i in range(n):
+        # 速度を先に更新
+        vel[i][0] += acc[i][0] * dt
+        vel[i][1] += acc[i][1] * dt
+        vel[i][2] += acc[i][2] * dt
+        # 更新された速度で位置を更新
+        pos[i][0] += vel[i][0] * dt
+        pos[i][1] += vel[i][1] * dt
+        pos[i][2] += vel[i][2] * dt
+        # 境界反射
+        if pos[i][0] < xlo: pos[i][0] = xlo; vel[i][0] *= -restitution
+        if pos[i][0] > xhi: pos[i][0] = xhi; vel[i][0] *= -restitution
+        # ... y, z も同様</code></pre>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ O(N²) 問題</div>
+  全粒子ペアをループするため計算量は $O(N^2)$ です。
+  N=400 で 160,000 ペア、N=1500 で 2,250,000 ペア。
+  本番では<strong>空間ハッシュ（格子法）</strong>で $O(N)$ に高速化します（fluid-engine-dev が実装）。
+  学習用サンプルでは粒子数を 400 に抑えてこの問題を回避しています。
+</div>
+</section>
+
+<section id="sph-presets">
+<h3>プリセット設計パターン</h3>
+
+<p>プリセットは「設定オブジェクト + 初期化関数」を分離する設計です。
+新プリセットを追加するときは辞書にエントリを追加するだけで、コアロジックは変更不要です。</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>プリセット定義パターン</span></div>
+  <pre><code class="language-python">PRESETS = {
+    "water_drop": dict(
+        description="球形の水滴が落下して床に衝突",
+        gravity=(0, -9.8, 0),       # 地球重力
+        particle_count=1500,
+        h=0.12,                     # カーネル半径（粒子間隔の目安）
+        stiffness=80.0,             # 高いほど非圧縮性が強い（水）
+        rest_density=1000.0,        # 水の密度 [kg/m³]
+        viscosity=0.01,             # 低粘性（水）
+        bounds=(-1.5, 1.5, 0.0, 3.0, -1.5, 1.5),
+        init="drop",                # 初期化関数キー
+    ),
+    "smoke": dict(
+        gravity=(0, 0.5, 0),        # 上向き（浮力）
+        stiffness=20.0,             # 低剛性（気体）
+        rest_density=1.2,           # 空気の密度
+        viscosity=0.05,             # 高粘性（拡散しやすい）
+        init="smoke_source",
+    ),
+    # 新プリセットを追加するときはここに dict を追加するだけ
+}
+
+# 設定と実行の分離：初期化関数は別に定義
+INITIALIZERS = {
+    "drop": _init_drop,
+    "smoke_source": _init_smoke_source,
+    "two_streams": _init_two_streams,
+}
+</code></pre>
+</div>
+
+<table>
+  <tr><th>パラメータ</th><th>水 (water_drop)</th><th>煙 (smoke)</th><th>水しぶき (splash)</th></tr>
+  <tr><td>gravity_y</td><td>-9.8（下向き）</td><td>+0.5（上向き浮力）</td><td>-9.8（下向き）</td></tr>
+  <tr><td>stiffness</td><td>80.0（高）</td><td>20.0（低）</td><td>100.0（高）</td></tr>
+  <tr><td>rest_density</td><td>1000（水）</td><td>1.2（空気）</td><td>1000（水）</td></tr>
+  <tr><td>viscosity</td><td>0.01（低）</td><td>0.05（高）</td><td>0.003（極低）</td></tr>
+  <tr><td>挙動</td><td>塊が落下・跳ね返り</td><td>ゆるやかに上昇</td><td>激しく飛び散る</td></tr>
+</table>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     PHASE 2 — VIEWER
+═══════════════════════════════════════════════════════════ -->
+<section id="viewer-arch">
+<h2><span class="phase-badge badge-green">Phase 2</span>Three.js Viewer — UI アーキテクチャ</h2>
+
+<p class="lead">
+<code>viewer/index.html</code> は単一の HTML ファイルで完結する 3D パーティクルビューワーです。
+サーバー不要でブラウザのダブルクリックで起動できます。
+</p>
+
+<h3>Three.js の選択理由</h3>
+<div class="card-grid">
+  <div class="card"><h4>WebGL 抽象化</h4><p>WebGL の低レベル API（シェーダーコンパイル・バッファ管理）を隠蔽。パーティクル 10 万個でも数十行で実装可能。</p></div>
+  <div class="card"><h4>OrbitControls</h4><p>マウスドラッグ・スクロールによるカメラ操作が 2 行で実装できる。</p></div>
+  <div class="card"><h4>カスタムシェーダー対応</h4><p>RawShaderMaterial / ShaderMaterial で GLSL を直接書ける。Point Sprite の実装が容易。</p></div>
+</div>
+</section>
+
+<section id="viewer-shader">
+<h3>GLSL シェーダー — Point Sprite</h3>
+<p>通常の <code>THREE.Points</code> は正方形のピクセルを描画します。
+<strong>Point Sprite</strong> はシェーダーで各パーティクルを球形に見せるテクニックです：</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">GLSL</span><span>Vertex Shader — パーティクルサイズと色計算</span></div>
+  <pre><code class="language-glsl">// Vertex Shader
+attribute float speed;      // 各粒子の速度スカラー
+
+void main() {
+    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+
+    // 透視投影でのピクセルサイズ計算
+    // カメラから遠いほど小さく見える
+    gl_PointSize = uSize * (300.0 / -mvPos.z);
+
+    gl_Position = projectionMatrix * mvPos;
+
+    // Fragment Shader に渡す変数
+    vSpeed = speed;
+    vY     = position.y;    // 深度カラー用のY座標
+}</code></pre>
+</div>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">GLSL</span><span>Fragment Shader — 球形 + カラーモード</span></div>
+  <pre><code class="language-glsl">// Fragment Shader
+void main() {
+    // gl_PointCoord: Point の中心を(0.5,0.5)とする UV座標
+    vec2 uv = gl_PointCoord - 0.5;
+    float dist = length(uv);
+
+    // 距離 > 0.5 なら円の外 → 描画しない（正方形を球形に）
+    if (dist > 0.5) discard;
+
+    // ガウシアン風の輝度（中心が明るく、端が暗い）
+    float alpha = exp(-dist * dist * 8.0) * uOpacity;
+
+    // カラーモードに応じて色を決定
+    vec3 col;
+    if (uColorMode == 0) {
+        // depth モード: Y座標 → 青〜白
+        float t = clamp(vY / uBoundsMax.y, 0.0, 1.0);
+        col = mix(vec3(0.1, 0.3, 1.0), vec3(0.9, 0.95, 1.0), t);
+    } else if (uColorMode == 1) {
+        // speed モード: 速さ → 青〜赤
+        float t = clamp(vSpeed / 5.0, 0.0, 1.0);
+        col = mix(vec3(0.0, 0.3, 1.0), vec3(1.0, 0.1, 0.0), t);
+    }
+    // ...
+
+    gl_FragColor = vec4(col, alpha);
+}</code></pre>
+</div>
+</section>
+
+<section id="viewer-data">
+<h3>Additive Blending — なぜ粒子が光るように見えるか</h3>
+<p>Three.js で <code>blending: THREE.AdditiveBlending</code> を設定することで、
+重なった粒子のカラー値を<strong>加算合成</strong>します。
+多数の粒子が重なる密集部分では色が白に近づき、まるで光っているように見えます。</p>
+
+<div class="flow">
+  <div class="flow-node">粒子 A<br>rgba(0.3, 0.5, 1.0, 0.4)</div>
+  <div class="flow-arrow">+</div>
+  <div class="flow-node">粒子 B<br>rgba(0.3, 0.5, 1.0, 0.4)</div>
+  <div class="flow-arrow">=</div>
+  <div class="flow-node" style="border-color: var(--accent);">結果<br>rgba(0.6, 1.0, 2.0→白, 0.8)</div>
+</div>
+</section>
+
+<section id="viewer-ops">
+<h3>カラーモード詳細</h3>
+<table>
+  <tr><th>モード</th><th>入力</th><th>色の意味</th><th>効果的な用途</th></tr>
+  <tr><td>depth（深度）</td><td>Y 座標</td><td>低→青、高→白</td><td>水の深さ・高さを可視化</td></tr>
+  <tr><td>speed（速度）</td><td>速度スカラー</td><td>遅→青、速→赤</td><td>衝突・高速領域を強調</td></tr>
+  <tr><td>heat（熱）</td><td>Y + 時間</td><td>低→黒、高→白</td><td>エネルギー分布の可視化</td></tr>
+  <tr><td>ocean（海）</td><td>Y + speed 混合</td><td>深海ブルー系</td><td>海洋エフェクト表現</td></tr>
+</table>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     PHASE 3 — C++ SPH
+═══════════════════════════════════════════════════════════ -->
+<section id="cpp-diff">
+<h2><span class="phase-badge badge-yellow">Phase 3</span>C++ SPH — fluid-engine-dev 連携</h2>
+
+<h3>Python SPH との比較</h3>
+<table>
+  <tr><th>観点</th><th>gen_sample.py（Python）</th><th>fluid-engine-dev（C++）</th></tr>
+  <tr><td>アルゴリズム</td><td>基本 SPH (Tait EOS)</td><td><strong>PCISPH</strong>（予測修正型）</td></tr>
+  <tr><td>粒子間探索</td><td>O(N²) 全ペア</td><td><strong>空間ハッシュ</strong> O(N)</td></tr>
+  <tr><td>粒子数</td><td>~1500（学習・デモ用）</td><td>8000+（映像品質）</td></tr>
+  <tr><td>速度</td><td>Python で 1 ステップ数秒</td><td>C++ で数十 ms</td></tr>
+  <tr><td>非圧縮性</td><td>近似的</td><td><strong>反復収束</strong>で高精度</td></tr>
+</table>
+</section>
+
+<section id="cpp-pcisph">
+<h3>PCISPH アルゴリズム</h3>
+<p>PCISPH（Predictive-Corrective Incompressible SPH）は通常の SPH の最大の弱点である
+「圧力の不正確さ」を解消します。</p>
+
+<ol class="steps">
+  <li><strong>予測ステップ</strong><br>現在の力（重力・粘性）だけで次フレームの位置・速度を仮計算します。</li>
+  <li><strong>密度誤差計算</strong><br>仮計算した位置で密度を評価し、目標密度との誤差を計算します。</li>
+  <li><strong>圧力修正ループ</strong><br>誤差が収束するまで（通常 3〜5 回）圧力を修正します。この反復が「非圧縮性の保証」になります。</li>
+  <li><strong>最終積分</strong><br>修正された圧力を使って最終的な位置・速度を更新します。</li>
+</ol>
+</section>
+
+<section id="cpp-convert">
+<h3>XYZ フォーマット自動検出</h3>
+<p>fluid-engine-dev は標準 XYZ と異なる「raw XYZ」を出力します。
+<code>xyz_to_json.py</code> は両方を自動判別します：</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>xyz_to_json.py — フォーマット自動検出</span></div>
+  <pre><code class="language-python">def parse_xyz(path: Path):
+    """
+    2種類のXYZフォーマットを自動検出してパース。
+
+    ┌─ 標準 XYZ ──────────────────────┐  ┌─ raw XYZ（fluid-engine-dev）──────┐
+    │ 1500           ← 粒子数          │  │ 0.123 2.100 -0.045  ← 直接座標   │
+    │ comment        ← コメント行      │  │ 0.456 1.987  0.123               │
+    │ 0.123 2.100 -0.045              │  │ ...                               │
+    │ ...                             │  └───────────────────────────────────┘
+    └─────────────────────────────────┘
+    """
+    lines = path.read_text().strip().splitlines()
+
+    try:
+        n = int(lines[0].strip())      # 1行目が整数 → 標準フォーマット
+        data_lines = lines[2: 2 + n]  # ヘッダー2行をスキップ
+    except ValueError:
+        data_lines = lines             # 整数でない → raw フォーマット（全行が座標）
+
+    flat = []
+    for line in data_lines:
+        parts = line.split()
+        if len(parts) >= 3:
+            flat.extend([round(float(parts[0]), 5),
+                         round(float(parts[1]), 5),
+                         round(float(parts[2]), 5)])
+    return flat</code></pre>
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     PHASE 4 — BLENDER
+═══════════════════════════════════════════════════════════ -->
+<section id="blender-mcp">
+<h2><span class="phase-badge badge-purple">Phase 4</span>Blender MCP 連携</h2>
+
+<p class="lead">
+Blender を「API として」使います。通常は手でクリックする操作を、
+<strong>MCP（Model Context Protocol）</strong>経由でプログラムから自動実行します。
+</p>
+
+<h3>MCP とは</h3>
+<p>MCP は「外部プログラムが Blender の Python 環境に直接コードを送り込める」プロトコルです。
+Blender のアドオンとして port 9876 で待ち受けし、受信した Python コードを <code>exec()</code> で実行します。</p>
+
+<h3>チャンク分割の理由</h3>
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ MCP の制限</div>
+  1回の MCP 呼び出しで送れるコードは有限であり、また実行時間にもタイムアウトがあります。
+  それ以上に重要なのが<strong>変数スコープ問題</strong>：別々の <code>execute_blender_code</code> 呼び出しは
+  それぞれ独立したスコープで実行されるため、前の呼び出しで作ったローカル変数にアクセスできません。
+</div>
+</section>
+
+<section id="blender-pipeline">
+<h3>変数永続化パターン — driver_namespace</h3>
+<p>Blender の <code>bpy.app.driver_namespace</code> はセッション全体で生存する辞書です。
+チャンク間で変数を共有するためにこれを使います：</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>Blender MCP チャンク間変数共有パターン</span></div>
+  <pre><code class="language-python"># ─── CHUNK 1: データ読み込み ─────────────────────────
+import bpy, numpy as np
+
+data = np.load("/path/to/fluid_data.npz")
+positions = data["positions"]   # shape: (frames, n_particles, 3)
+
+# driver_namespace に保存（セッション中ずっと生存）
+ns = bpy.app.driver_namespace
+ns["fk_positions"] = positions
+ns["fk_frames"]    = positions.shape[0]
+ns["fk_n"]         = positions.shape[1]
+
+print(f"読み込み完了: {positions.shape}")
+
+# ─── CHUNK 2: メッシュ作成（別の MCP 呼び出し）─────────
+import bpy
+
+# Chunk 1 で保存した変数を取得
+ns = bpy.app.driver_namespace
+positions = ns["fk_positions"]   # ✅ アクセス可能
+
+n = ns["fk_n"]
+# メッシュオブジェクト作成
+mesh = bpy.data.meshes.new("FluidMesh")
+mesh.from_pydata(positions[0].tolist(), [], [])  # フレーム0の位置
+# ...
+</code></pre>
+</div>
+
+<h3>6 チャンク構成</h3>
+<div class="code-block">
+  <div class="code-header"><span class="lang">Text</span><span>mcp_setup.py チャンク構成</span></div>
+  <pre><code class="language-plaintext">Chunk 1: fluid_data.npz 読み込み → driver_namespace に positions 保存
+Chunk 2: シーン作成（カメラ配置・環境光・HDRI・背景マテリアル）
+Chunk 3: 流体メッシュオブジェクト作成（フレーム0の粒子位置で初期化）
+Chunk 4: 流体マテリアル設定（Principled BSDF・透明度・IOR=1.33 水）
+Chunk 5: frame_change_pre ハンドラ登録
+         → タイムライン移動のたびに頂点座標を更新するイベントフック
+Chunk 6: アニメーション範囲設定（1〜80フレーム）・再生確認</code></pre>
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     PHASE 5 — WEBASSEMBLY
+═══════════════════════════════════════════════════════════ -->
+<section id="wasm-why">
+<h2><span class="phase-badge badge-orange">Phase 5</span>WebAssembly — リアルタイム SPH</h2>
+
+<p class="lead">
+WebAssembly（WASM）は C/C++ などで書いたコードをブラウザで直接実行できる技術です。
+Python では数秒かかるシミュレーションを、WASM なら 60fps でリアルタイム実行できます。
+</p>
+
+<h3>なぜ WASM か — 速度比較</h3>
+<table>
+  <tr><th>実行環境</th><th>N=256 の 1 ステップ</th><th>60fps 達成</th></tr>
+  <tr><td>Python（CPython）</td><td>~200ms</td><td>❌ 不可</td></tr>
+  <tr><td>JavaScript（V8）</td><td>~15ms</td><td>△ ギリギリ</td></tr>
+  <tr><td><strong>C++ → WASM</strong></td><td><strong>~2ms</strong></td><td><strong>✅ 余裕</strong></td></tr>
+</table>
+</section>
+
+<section id="wasm-cpp">
+<h3>C++ API 設計 — SoA レイアウト</h3>
+<p>WASM では配列のメモリレイアウトが重要です。
+<strong>SoA（Structure of Arrays）</strong>は CPU キャッシュ効率が高く、SIMD 最適化もかかりやすい：</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">C++</span><span>sph_wasm.cpp — SoA レイアウト</span></div>
+  <pre><code class="language-cpp">// ❌ AoS (Array of Structures) — キャッシュ効率が悪い
+struct Particle { float px, py, pz, vx, vy, vz; };
+static Particle particles[MAX_N];  // メモリ: [px0,py0,pz0,vx0,...][px1,py1...]
+
+// ✅ SoA (Structure of Arrays) — キャッシュフレンドリー
+static float g_px[MAX_N], g_py[MAX_N], g_pz[MAX_N];  // 位置
+static float g_vx[MAX_N], g_vy[MAX_N], g_vz[MAX_N];  // 速度
+static float g_rho[MAX_N], g_prs[MAX_N];              // 密度・圧力
+// メモリ: [px0,px1,px2,...][py0,py1,py2,...] — 連続アクセスが速い
+
+// ──────────────────────────────────────────
+//  公開 API（JS から呼ぶ関数）
+// ──────────────────────────────────────────
+
+EXPORT void sph_init(int n, int preset) {
+    g_n = (n > MAX_N) ? MAX_N : n;   // 安全な上限チェック
+    // プリセットに応じた初期配置
+    switch (preset) {
+        case 1:  initSmoke(g_n);  break;
+        case 2:  initSplash(g_n); break;
+        default: initDrop(g_n);   break;
+    }
+}
+
+EXPORT float* sph_get_positions() {
+    // SoA → インターリーブ形式に変換（Three.js が要求する形式）
+    for (int i = 0; i < g_n; i++) {
+        g_pos_buf[i*3+0] = g_px[i];
+        g_pos_buf[i*3+1] = g_py[i];
+        g_pos_buf[i*3+2] = g_pz[i];
+    }
+    return g_pos_buf;   // ポインタを JS に返す（ゼロコピー）
+}
+</code></pre>
+</div>
+</section>
+
+<section id="wasm-js">
+<h3>JavaScript から WASM を呼ぶ</h3>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">JavaScript</span><span>fluid_wasm.html — WASM ロードパターン</span></div>
+  <pre><code class="language-javascript">// Emscripten の MODULARIZE=1 オプションでビルドした場合
+// SphModule は Promise を返す非同期ファクトリ関数
+
+async function initWasm() {
+    // Step 1: グルーコードの <script> を動的に追加
+    await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'sph.js';
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+    });
+
+    // Step 2: WASM モジュールを初期化（非同期）
+    wasmModule = await SphModule();
+
+    // Step 3: C 関数をラップ（型チェック付き）
+    sph_init     = wasmModule.cwrap('sph_init',   null, ['number','number']);
+    sph_step     = wasmModule.cwrap('sph_step',   null, ['number']);
+    sph_get_pos  = wasmModule.cwrap('sph_get_positions', 'number', []);
+
+    // Step 4: シミュレーション初期化
+    sph_init(256, 0);   // 256粒子、プリセット0（水滴）
+}
+
+function updateParticles() {
+    sph_step(0.016);    // 1ステップ進める
+
+    // WASM のヒープから直接 Float32Array を作成（コピーなし！）
+    const ptr = sph_get_pos();
+    const positions = new Float32Array(
+        wasmModule.HEAPF32.buffer,   // WASM のメモリバッファ
+        ptr,                          // ポインタ（バイトオフセット）
+        256 * 3                       // 要素数
+    );
+
+    // Three.js の BufferGeometry に直接セット
+    geometry.attributes.position.array.set(positions);
+    geometry.attributes.position.needsUpdate = true;
+}
+</code></pre>
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✅ ゼロコピーのポイント</div>
+  <code>new Float32Array(wasmModule.HEAPF32.buffer, ptr, n)</code> は
+  WASM のメモリ領域を直接参照する View を作ります（データのコピーが発生しない）。
+  毎フレーム 256×3=768 個の float をコピーする必要がなく、高速です。
+</div>
+</section>
+
+<section id="wasm-build">
+<h3>ビルドコマンドと各フラグの意味</h3>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Bash</span><span>Emscripten ビルドコマンド</span></div>
+  <pre><code class="language-bash">emcc sph_wasm.cpp \
+  -o sph.js \         # 出力: JS グルーコード（sph.wasm も自動生成）
+  -O3 \               # 最適化レベル3（最速）
+  -s WASM=1 \         # WASM を生成（デフォルトだが明示）
+  -s MODULARIZE=1 \   # SphModule() という非同期ファクトリに包む
+  -s EXPORT_NAME="SphModule" \
+  -s EXPORTED_FUNCTIONS='[  # エクスポートする C 関数リスト
+      "_sph_init","_sph_step",
+      "_sph_get_positions","_sph_get_speeds",
+      "_sph_get_particle_count","_sph_reset",
+      "_sph_set_gravity","_sph_set_viscosity",
+      "_sph_set_stiffness","_sph_set_kernel_radius"
+  ]' \
+  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","HEAPF32"]' \
+  -s ALLOW_MEMORY_GROWTH=1 \  # 実行時にメモリを動的拡張可能に
+  -std=c++17</code></pre>
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">📌 COOP/COEP ヘッダーが必要な理由</div>
+  <code>SharedArrayBuffer</code>（WASM でのメモリ共有に使用）は
+  <strong>クロスオリジン分離</strong>が有効でないと使えません。
+  serve.py が <code>Cross-Origin-Opener-Policy: same-origin</code> と
+  <code>Cross-Origin-Embedder-Policy: require-corp</code> を付与することでこれを有効化しています。
+  file:// で直接開いても動かない理由がここにあります。
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     PHASE 6 — NEURAL FLUID
+═══════════════════════════════════════════════════════════ -->
+<section id="nn-overview">
+<h2><span class="phase-badge badge-red">Phase 6</span>Neural Fluid — Graph Neural Network</h2>
+
+<p class="lead">
+物理シミュレーターの代わりに<strong>ニューラルネットワーク</strong>に流体の挙動を学習させます。
+「現在フレームの粒子状態 → 次フレームの粒子位置」を予測します。
+GNN（Graph Neural Network）を選ぶ理由は、粒子データが自然にグラフ構造を持つからです。
+</p>
+
+<h3>なぜ GNN か</h3>
+
+<div class="card-grid">
+  <div class="card"><h4>粒子 = ノード</h4><p>各粒子がグラフのノードになります。粒子数が変化しても同じモデルが使えます。</p></div>
+  <div class="card"><h4>近傍関係 = エッジ</h4><p>物理的に「影響し合う粒子」をエッジで結ぶ。KNN（K最近傍）で動的に構築。</p></div>
+  <div class="card"><h4>並置不変性（Permutation Invariance）</h4><p>粒子の並び順を変えても同じ結果になる。MLP や RNN にはない性質。</p></div>
+  <div class="card"><h4>局所性の帰納バイアス</h4><p>遠い粒子は影響しない（物理的に正しい）という事前知識をアーキテクチャに組み込める。</p></div>
+</div>
+</section>
+
+<section id="nn-dataset">
+<h3>データセット設計</h3>
+
+<h4>収集戦略：パラメータ空間のカバー</h4>
+<p>単一パラメータのシミュレーションだけでは、GNN が「重力 -9.8、粘性 0.01 のときだけ動く」
+モデルになってしまいます。<strong>多様なパラメータで学習</strong>させることで汎化性能が上がります：</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>collect_data.py — パラメータ空間設計</span></div>
+  <pre><code class="language-python">PARAM_SPACE = {
+    # 各パラメータの範囲（min, max）
+    "gravity_y":    (-15.0, -5.0),   # 重力の強さ（3倍の差）
+    "stiffness":    (40.0,  150.0),  # 剛性係数（3.75倍の差）
+    "viscosity":    (0.002, 0.05),   # 粘性（25倍の差！）
+    "rest_density": (800.0, 1200.0), # 静止密度（1.5倍の差）
+}
+
+def sample_preset(seed: int) -> dict:
+    """再現可能なランダムパラメータ生成."""
+    rng = random.Random(seed)   # シードで再現可能
+    p = dict(PRESETS["water_drop"])
+    p["particle_count"] = 400   # 学習用に粒子数を削減
+    p["gravity"] = (0.0, rng.uniform(*PARAM_SPACE["gravity_y"]), 0.0)
+    p["stiffness"]    = rng.uniform(*PARAM_SPACE["stiffness"])
+    p["viscosity"]    = rng.uniform(*PARAM_SPACE["viscosity"])
+    p["rest_density"] = rng.uniform(*PARAM_SPACE["rest_density"])
+    return p</code></pre>
+</div>
+
+<h4>入出力フォーマット</h4>
+<table>
+  <tr><th>変数</th><th>Shape</th><th>内容</th></tr>
+  <tr><td><code>X_train</code></td><td>(8415, 400, 6)</td><td>フレーム t の [pos(3) + vel(3)]、正規化済み</td></tr>
+  <tr><td><code>Y_train</code></td><td>(8415, 400, 3)</td><td>フレーム t+1 の位置、正規化済み</td></tr>
+  <tr><td><code>X_val</code></td><td>(1485, 400, 6)</td><td>検証用（全体の 15%）</td></tr>
+  <tr><td><code>Y_val</code></td><td>(1485, 400, 3)</td><td>検証用</td></tr>
+</table>
+
+<h4>正規化設計（重要！）</h4>
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>collect_data.py — 正規化</span></div>
+  <pre><code class="language-python"># 位置: シミュレーション空間の bounds に基づいて [-1, 1] に正規化
+bounds = PRESETS[BASE_PRESET]["bounds"]
+pos_min = np.array([bounds[0], bounds[2], bounds[4]])  # (3,)
+pos_max = np.array([bounds[1], bounds[3], bounds[5]])  # (3,)
+
+def norm_pos(p):
+    return (p - pos_min) / (pos_max - pos_min) * 2 - 1  # [-1, 1]
+
+# 速度: 全サンプルの標準偏差で正規化（±3σ が ±1 に収まる）
+vel_std = X_all[..., 3:].std(axis=(0, 1)).clip(min=1e-6)  # (3,)
+
+def norm_vel(v):
+    return v / (vel_std * 3.0)   # ±3σ → ±1
+
+# ✅ 両方正規化してから保存
+X_norm[..., :3] = norm_pos(X_all[..., :3])  # 位置
+X_norm[..., 3:] = norm_vel(X_all[..., 3:])  # 速度
+Y_norm = norm_pos(Y_all)                      # 次フレーム位置
+</code></pre>
+</div>
+</section>
+
+<section id="nn-model-v1">
+<h3>モデル v1 — Interaction Network</h3>
+
+<p>Interaction Network は DeepMind が 2016 年に提案した、物理シミュレーションを学習する
+GNN の原型です：</p>
+
+<div class="diagram-box">
+<pre>
+入力 x (B, N, 6) [pos + vel, 正規化済み]
+         │
+         ▼
+┌─────────────────────┐
+│  ParticleEncoder    │  MLP: 6 → 128 → 128 → 64 (latent)
+│  各粒子を潜在空間へ  │  活性化: SiLU (スムーズな ReLU)
+└──────────┬──────────┘
+           │ h (B, N, 64)
+           ▼
+┌──────────────────────────────────────────────────────────┐
+│  メッセージパッシング × 2 ステップ                         │
+│                                                            │
+│  Step 1:                                                   │
+│  ① KNN グラフ構築 (k=12): 各粒子の近傍12粒子を特定        │
+│  ② エッジ特徴構築: [hi, hj, rel_pos(3), dist(1)] → 133次元│
+│  ③ EdgeMLP: 133 → 128 → 128 → 64 → メッセージ            │
+│  ④ 集約 (sum): 近傍からのメッセージを合算                   │
+│  ⑤ NodeMLP: [h, agg] = 128 → 128 → 64 → 新 h             │
+│                                                            │
+│  Step 2: 同じ操作を更新後の h で繰り返す                    │
+└──────────┬───────────────────────────────────────────────┘
+           │ h (B, N, 64)
+           ▼
+┌─────────────────────┐
+│  Decoder (MLP)      │  64 → 128 → 128 → 3
+│  位置変化量を予測    │
+└──────────┬──────────┘
+           │ Δpos (B, N, 3)
+           ▼
+  next_pos = pos + Δpos   ← 残差接続（学習が安定）
+
+パラメータ数: 184,067
+</pre>
+</div>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>model.py — KNN グラフ構築</span></div>
+  <pre><code class="language-python">def knn_graph(pos: torch.Tensor, k: int = 12):
+    """
+    pos: (B, N, 3) — バッチ×粒子数×3次元
+    Returns: (B, N, k) — 各粒子の近傍 k 個のインデックス
+    """
+    B, N, _ = pos.shape
+
+    # (B,N,1,3) - (B,1,N,3) → (B,N,N,3): 全ペアの差ベクトル
+    diff = pos.unsqueeze(2) - pos.unsqueeze(1)
+
+    # 距離行列 (B,N,N)
+    dist = (diff ** 2).sum(-1)
+
+    # 自分自身は除外（対角成分を inf に）
+    dist.diagonal(dim1=1, dim2=2).fill_(float('inf'))
+
+    # 最小 k 個のインデックスを取得
+    _, idx = dist.topk(k, dim=-1, largest=False)
+    return idx   # (B, N, k)</code></pre>
+</div>
+</section>
+
+<section id="nn-model-v2">
+<h3>モデル v2/v3 — GlobalContext + LayerNorm</h3>
+
+<p>v1 からの改善点：</p>
+
+<div class="card-grid">
+  <div class="card"><h4>GlobalContext</h4><p>全粒子の平均潜在ベクトルを各粒子に付与。「全体の流れ」を各粒子が把握できる。v1 には全くない。</p></div>
+  <div class="card"><h4>LayerNorm</h4><p>各 MLP の中間層に LayerNorm を追加。勾配の爆発/消失を防ぎ、深いネットワークでも安定訓練できる。</p></div>
+  <div class="card"><h4>スケールアップ</h4><p>latent: 64→128, hidden: 128→256, mp_steps: 2→3。パラメータ数が 184K → 1.13M に増加。</p></div>
+  <div class="card"><h4>k_neighbors 拡大</h4><p>近傍数: 12→16。より広い範囲の粒子から情報を集める。圧力伝播をより正確に模倣できる。</p></div>
+</div>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>model_v2.py — GlobalContext モジュール</span></div>
+  <pre><code class="language-python">class GlobalContext(nn.Module):
+    """
+    全粒子の平均特徴 → グローバルコンテキスト（各粒子に付与）
+
+    なぜ必要か:
+    メッセージパッシングだけでは「局所的な情報」しか伝わらない。
+    k=16 近傍の情報は 3 ステップで k³=4096 粒子まで伝播するが、
+    全体の運動量や重心位置を直接把握する仕組みがない。
+    GlobalContext はその欠如を補う。
+    """
+    def __init__(self, latent=128, hidden=256):
+        super().__init__()
+        self.net = mlp([latent, hidden, latent], last_act=True)
+
+    def forward(self, h: torch.Tensor):
+        # h: (B, N, L)
+        g = h.mean(dim=1, keepdim=True)   # (B, 1, L) — 全粒子の平均
+        g = self.net(g)                    # (B, 1, L) — 非線形変換
+        return g.expand_as(h)             # (B, N, L) — 全粒子にブロードキャスト
+
+
+class NeuralFluidV2(nn.Module):
+    def __init__(self, in_dim=6, latent=128, hidden=256, k_neighbors=16, n_mp_steps=3):
+        super().__init__()
+        self.encoder   = ParticleEncoder(in_dim, hidden, latent)
+        self.global_ctx = GlobalContext(latent, hidden)
+        self.ctx_proj  = mlp([latent*2, hidden, latent], last_act=True)
+
+        edge_in = latent * 2 + 3 + 1   # [hi, hj, rel_pos(3), dist(1)]
+        self.edge_mlps = nn.ModuleList([
+            EdgeMLP(edge_in, hidden, latent) for _ in range(n_mp_steps)
+        ])
+        self.node_mlps = nn.ModuleList([
+            NodeMLP(latent*2, hidden, latent) for _ in range(n_mp_steps)
+        ])
+
+        self.dec_pos = mlp([latent, hidden, 3])  # 位置予測
+        self.dec_vel = mlp([latent, hidden, 3])  # 速度予測（v3では使用せず）
+
+    def forward(self, x):
+        B, N, _ = x.shape
+        pos = x[..., :3]
+
+        h = self.encoder(x)                          # (B,N,L)
+        g = self.global_ctx(h)                       # (B,N,L) グローバル文脈
+        h = self.ctx_proj(torch.cat([h, g], dim=-1)) # (B,N,L) 局所+全体を統合
+
+        nbr = knn_graph(pos, self.k)
+        for step in range(self.n_mp):
+            # ... メッセージパッシング（v1と同様）
+            pass
+
+        d_pos = self.dec_pos(h)   # (B,N,3)
+        d_vel = self.dec_vel(h)   # (B,N,3) — v3の損失では使わない
+        return d_pos, d_vel
+</code></pre>
+</div>
+</section>
+
+<section id="nn-train">
+<h3>訓練パイプライン</h3>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>train_v2.py — 訓練ループの完全実装</span></div>
+  <pre><code class="language-python">def main():
+    # ── オプティマイザ ──────────────────────────────────────
+    opt = torch.optim.AdamW(
+        model.parameters(),
+        lr=2e-3,          # 初期学習率
+        weight_decay=1e-4 # L2正則化（過学習抑制）
+    )
+
+    # ── 学習率スケジューラ（Cosine Annealing）─────────────────
+    # T_max エポックをかけて lr が 2e-3 → 1e-5 まで余弦曲線で減衰
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=120, eta_min=1e-5
+    )
+
+    # ── 混合精度（AMP）────────────────────────────────────────
+    # float32 の計算を自動で float16 に落とす → メモリ半減・高速化
+    scaler = GradScaler()
+
+    for ep in range(1, 121):
+        model.train()
+        for X, Y in tr_dl:
+            with autocast():              # AMP: 自動で fp16/fp32 を切替
+                pred = model.predict_next(X)
+                loss, _ = loss_fn(pred, X, Y)
+
+            opt.zero_grad()
+            scaler.scale(loss).backward()  # スケールされた勾配
+            scaler.unscale_(opt)
+
+            # 勾配クリッピング（勾配爆発を防ぐ）
+            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+            scaler.step(opt)
+            scaler.update()
+
+        sched.step()   # 学習率を Cosine で減衰
+
+        # チェックポイント保存（検証損失が改善したとき）
+        if va_loss &lt; best_val:
+            best_val = va_loss
+            torch.save({
+                "model_state": model.state_dict(),
+                "config": vars(args),
+                "best_val": best_val
+            }, ckpt_dir / "best.pt")
+</code></pre>
+</div>
+
+<h4>学習率の変化（Cosine Annealing）</h4>
+<div class="diagram-box">
+<pre>
+lr
+2e-3 ─┐
+      │╲
+      │  ╲
+      │    ╲
+      │      ╲
+      │        ╲
+      │          ╲
+      │            ╲___
+1e-5  └──────────────────────── epochs
+       0   20   40   60   80  100  120
+
+最初は大きいステップで素早く収束、後半は小さいステップで精密に最適化
+</pre>
+</div>
+</section>
+
+<section id="nn-bugs">
+<h3>バグと修正の記録 — 失敗から学ぶ</h3>
+
+<p>このプロジェクトで実際に起きたバグを詳細に記録します。
+<strong>ML の実装バグは気づきにくく、損失が「それっぽい値」を示しながら実は壊れていることがある</strong>というのが最大の教訓です。</p>
+
+<div class="callout callout-error">
+  <div class="callout-title">🐛 Bug 1: 速度の正規化漏れ（v2 1回目）</div>
+  <p><strong>症状：</strong> val loss = 16,838（正常は 0.05〜0.1）</p>
+  <p><strong>原因：</strong> 位置は [-1,1] に正規化したが、速度を正規化せずに学習データに含めた。</p>
+  <pre style="background:#161b22;padding:12px;border-radius:6px;font-size:12px;color:#f85149;overflow-x:auto">
+位置スケール:  [-1.5, 1.5]  →  正規化後 [-1, 1]  ✅
+速度スケール:  [-100, 100]  →  正規化なし ❌
+
+⇒ モデルへの入力テンソルで速度が位置の 100 倍スケール
+⇒ 勾配が速度由来の損失に支配される
+⇒ 位置予測が全く学習されない</pre>
+  <p><strong>修正：</strong> <code>vel_std = X_all[..., 3:].std(axis=(0,1))</code> で標準偏差を計算し、
+  <code>v / (vel_std * 3.0)</code> で ±3σ → ±1 に正規化。</p>
+</div>
+
+<div class="callout callout-error">
+  <div class="callout-title">🐛 Bug 2: 損失関数の空間不一致（v2 2回目）</div>
+  <p><strong>症状：</strong> val loss = 2.86（改善したが、推論がモード崩壊）</p>
+  <p><strong>原因：</strong> 速度の入力は正規化したが、損失関数の <code>true_vel</code> 計算が間違っていた。</p>
+  <pre style="background:#161b22;padding:12px;border-radius:6px;font-size:12px;color:#f85149;overflow-x:auto">
+true_vel = target_y - target_x[..., :3]
+         = (正規化位置空間の差分)  ±0.01〜0.1
+
+pred_vel = モデル出力の速度      ±1（正規化速度空間）
+
+⇒ 10〜100倍のスケール差
+⇒ loss_vel が position 損失を支配
+⇒ 全粒子が同じ速度で動く「モード崩壊」</pre>
+  <p><strong>修正（v3）：</strong> 速度損失を完全に廃止。位置損失 + smoothness のみに統一。
+  「損失関数の各項は同じ空間で比較する」という原則を徹底。</p>
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✅ v3 の修正後損失関数</div>
+  <pre style="background:#0d1117;padding:12px;border-radius:6px;font-size:12px;overflow-x:auto"><code class="language-python">class FluidLossV2(nn.Module):
+    """v3 修正版: 位置損失のみ（空間一致）"""
+    def __init__(self, w_pos=1.0, w_smooth=0.05):
+        super().__init__()
+        self.w_pos    = w_pos
+        self.w_smooth = w_smooth
+
+    def forward(self, pred, target_x, target_y):
+        pred_pos = pred[..., :3]
+        true_pos = target_y        # どちらも正規化位置空間 ✅
+
+        loss_pos    = F.mse_loss(pred_pos, true_pos)
+        loss_smooth = (pred_pos[:, 1:] - pred_pos[:, :-1]).pow(2).mean()
+
+        return self.w_pos * loss_pos + self.w_smooth * loss_smooth</code></pre>
+</div>
+
+<h4>バージョン別結果まとめ</h4>
+<table>
+  <tr><th>Version</th><th>best_val</th><th>状態</th><th>根本原因</th></tr>
+  <tr><td>v1</td><td class="hl-green">0.053</td><td>✅ 良好</td><td>シンプルな位置損失のみ</td></tr>
+  <tr><td>v2（Bug 1）</td><td class="hl-red">16,838</td><td>❌ 壊滅</td><td>速度未正規化</td></tr>
+  <tr><td>v2（Bug 2）</td><td class="hl-yellow">2.862</td><td>△ モード崩壊</td><td>損失空間不一致</td></tr>
+  <tr><td>v3（修正完了）</td><td class="hl-green">0.097</td><td>✅ 良好</td><td>位置損失のみに統一</td></tr>
+</table>
+
+<div class="callout callout-tip">
+  <div class="callout-title">📚 ML 実装の鉄則（このバグから学んだこと）</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li>損失関数の各項は<strong>同じスケール・同じ空間</strong>で比較する</li>
+    <li>データの正規化は入力だけでなく<strong>ラベルも含めて一貫して</strong>行う</li>
+    <li>損失が「それっぽい値」を示しても、<strong>推論結果を必ず可視化</strong>して確認する</li>
+    <li>損失が急速に収束後、プラトーになる場合は<strong>損失関数の設計に問題がある可能性</strong></li>
+  </ol>
+</div>
+</section>
+
+<section id="nn-infer">
+<h3>推論 — 自律ロールアウト</h3>
+
+<p>学習済みモデルで長期間の未来を予測します。
+1 ステップの予測を繰り返して、任意フレーム数のシミュレーションを生成します：</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>infer_v2.py — 自律ロールアウト</span></div>
+  <pre><code class="language-python">def run_inference(model, x0: torch.Tensor, frames: int, device):
+    """
+    x0: (1, N, 6) 正規化済み初期状態 [pos_norm | vel_norm]
+
+    ロールアウト: x0 → x1 → x2 → ... → x_{frames}
+    各ステップで自分の予測を次ステップの入力として使う
+    """
+    model.eval()
+    x = x0.to(device)
+    results = []
+
+    with torch.no_grad():    # 推論時は勾配不要
+        for _ in range(frames):
+            x_next = model.predict_next(x)    # (1,N,6): pos+vel を予測
+            results.append(x_next[..., :3].squeeze(0).cpu().numpy())  # pos のみ保存
+            x = x_next   # 予測結果を次の入力へ
+
+    return results   # List of (N,3), length=frames
+
+# 逆正規化: [-1,1] → 実際の座標
+def denorm_pos(pos_norm, pos_min, pos_max):
+    pos_range = pos_max - pos_min
+    return (pos_norm + 1) / 2 * pos_range + pos_min
+</code></pre>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ ロールアウトの誤差蓄積</div>
+  各ステップの予測誤差が<strong>次ステップの入力誤差になって累積</strong>します。
+  1 ステップあたりの誤差が小さくても、100 ステップ後には大きくずれる可能性があります。
+  これが「Neural Fluid の長期安定性」の課題で、現在の研究ホットトピックの一つです。
+  対策：より多くの多様な訓練データ / 誤差をランダムに注入する DAgger / 統計力学的な正則化。
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     DESIGN PATTERNS
+═══════════════════════════════════════════════════════════ -->
+<section id="patterns-norm">
+<h2>設計パターン — 正規化戦略</h2>
+
+<p>機械学習で<strong>最も重要で最も見落とされやすい</strong>のが正規化です。
+FluidKit で遭遇した 2 つのバグは両方とも正規化の問題でした。</p>
+
+<h3>正規化の原則</h3>
+<table>
+  <tr><th>原則</th><th>適用例</th></tr>
+  <tr><td>入力の全次元が同スケールになるように</td><td>位置 [-1,1]、速度 ±1（3σ正規化）</td></tr>
+  <tr><td>損失関数の各項も同スケールで</td><td>vel_loss を廃止（空間が違うため）</td></tr>
+  <tr><td>正規化パラメータはデータから計算し保存</td><td>vel_std を meta.json に保存</td></tr>
+  <tr><td>推論時も訓練時と同じパラメータを使う</td><td>meta.json から vel_std を読み込む</td></tr>
+</table>
+</section>
+
+<section id="patterns-loss">
+<h2>設計パターン — 損失関数設計</h2>
+
+<h3>複合損失の罠</h3>
+<p>複数の損失項を組み合わせるときは、各項のスケールが揃っているかを確認してください：</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>損失項のスケール確認方法</span></div>
+  <pre><code class="language-python"># 訓練の最初のバッチで各損失項を出力して確認する
+loss_pos    = F.mse_loss(pred_pos, true_pos)   # 期待値: 0.01〜1.0
+loss_vel    = F.mse_loss(pred_vel, true_vel)   # スケールを確認！
+loss_smooth = (pred_pos[:, 1:] - pred_pos[:, :-1]).pow(2).mean()
+
+print(f"loss_pos:    {loss_pos.item():.4f}")    # これが支配的になるべき
+print(f"loss_vel:    {loss_vel.item():.4f}")    # pos と同スケール？
+print(f"loss_smooth: {loss_smooth.item():.4f}") # pos の 1/10 程度が適切
+
+# もし loss_vel が loss_pos の 100 倍なら → スケールがおかしい
+</code></pre>
+</div>
+</section>
+
+<section id="patterns-mvp">
+<h2>設計パターン — MVP 開発戦略</h2>
+
+<p>このプロジェクトの開発順序は「最小動作可能なものを先に作り、段階的に強化する」
+<strong>MVP（Minimum Viable Product）戦略</strong>に従っています：</p>
+
+<ol class="steps">
+  <li>
+    <strong>Phase 1: 動くデモを最速で作る</strong>
+    純 Python の SPH（精度低でもOK）と Three.js Viewer で「見えるもの」を最初に作る。
+    外部依存ゼロで誰でもすぐ動かせる。
+  </li>
+  <li>
+    <strong>Phase 2-3: 品質を上げる</strong>
+    C++ SPH で粒子数・精度を向上。XYZ 変換ツールで既存ツールと連携。
+    Phase 1 の Viewer はそのまま流用。
+  </li>
+  <li>
+    <strong>Phase 4-5: 用途を広げる</strong>
+    Blender 連携（映像制作）、WASM（Web 埋め込み）で異なる用途に対応。
+    Phase 1 の物理コードを C++ に書き直すだけで WASM が動く。
+  </li>
+  <li>
+    <strong>Phase 6: 高度化する</strong>
+    Neural Fluid で「AI による高速化」を追加。
+    失敗（バグ）→ 修正 → 再訓練のサイクルを繰り返す。
+  </li>
+  <li>
+    <strong>継続的な改善</strong>
+    v1（184K params）→ v2（バグ発覚）→ v3（修正）という反復。
+    完璧を目指さず、動くものを軸に改善する。
+  </li>
+</ol>
+
+<div class="callout callout-tip">
+  <div class="callout-title">💡 このプロジェクトから持ち帰れる教訓</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li><strong>最初は動くものを作る</strong> — 美しいアーキテクチャより、まず動くコードが優先</li>
+    <li><strong>データフォーマットで疎結合にする</strong> — JSON/NPY を挟むことで各モジュールが独立</li>
+    <li><strong>失敗を記録する</strong> — ML のバグは目に見えない。best_val の変化と視覚的確認の両方が必要</li>
+    <li><strong>段階的に複雑にする</strong> — v1 → v2 → v3 のように、1 つずつ要素を追加して効果を確認</li>
+    <li><strong>再現可能にする</strong> — シード値・パラメータ・メタデータを常に保存する</li>
+  </ol>
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     FOOTER
+═══════════════════════════════════════════════════════════ -->
+<div class="page-footer">
+  FluidKit 完全講義資料 — 2026 &nbsp;|&nbsp;
+  生成: Claude Sonnet 4.6 &nbsp;|&nbsp;
+  <a href="algorithms.html" style="color:var(--accent)">アルゴリズム数式解説</a> &nbsp;|&nbsp;
+  <a href="index.html" style="color:var(--accent)">プロジェクトトップ</a>
+</div>
+
+</div><!-- /#main -->
+
+<script>
+// シンタックスハイライト
+hljs.highlightAll();
+
+// サイドバー アクティブリンク
+const sections = document.querySelectorAll('section[id]');
+const navLinks = document.querySelectorAll('#sidebar nav a[href^="#"]');
+
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      navLinks.forEach(a => {
+        a.classList.toggle('active', a.getAttribute('href') === '#' + e.target.id);
+      });
+    }
+  });
+}, { rootMargin: '-20% 0px -70% 0px' });
+
+sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

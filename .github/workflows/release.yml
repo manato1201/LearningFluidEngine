@@ -1,0 +1,198 @@
+name: Build WASM & Release
+
+# ─────────────────────────────────────────────────────────────────────
+# トリガー:
+#   push tag v*.*.* → GitHub Release を自動作成し WASM をアップロード
+#   手動実行 (workflow_dispatch) も可
+# ─────────────────────────────────────────────────────────────────────
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.0.0)"
+        required: false
+        default: "dev"
+
+permissions:
+  contents: write   # Release の作成・アセットアップロードに必要
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # Job 1: Emscripten で WASM をビルド
+  # ─────────────────────────────────────────────────────────────────
+  build-wasm:
+    name: Build sph.wasm (Emscripten)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Emscripten SDK をキャッシュ付きでセットアップ
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v13
+        with:
+          version: "3.1.56"   # 最新 LTS
+          actions-cache-folder: ".emsdk-cache"
+
+      - name: Verify emcc
+        run: emcc --version
+
+      # C++ → WASM コンパイル
+      - name: Build sph.wasm
+        working-directory: FluidKit/wasm
+        run: |
+          emcc sph_wasm.cpp -o sph.js \
+            -O3 \
+            -s WASM=1 \
+            -s MODULARIZE=1 \
+            -s EXPORT_NAME="SphModule" \
+            -s EXPORTED_FUNCTIONS='[
+                "_sph_init",
+                "_sph_step",
+                "_sph_get_positions",
+                "_sph_get_speeds",
+                "_sph_get_particle_count",
+                "_sph_reset",
+                "_sph_set_gravity",
+                "_sph_set_viscosity",
+                "_sph_set_stiffness",
+                "_sph_set_kernel_radius"
+            ]' \
+            -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","HEAPF32"]' \
+            -s ALLOW_MEMORY_GROWTH=1 \
+            -s SINGLE_FILE=0 \
+            --closure 0 \
+            -std=c++17
+
+      # ビルド成果物を確認
+      - name: Verify build output
+        working-directory: FluidKit/wasm
+        run: |
+          ls -lh sph.wasm sph.js
+          echo "sph.wasm size: $(wc -c < sph.wasm) bytes"
+          echo "sph.js   size: $(wc -c < sph.js)   bytes"
+
+      # build/ フォルダにまとめる
+      - name: Package build artifacts
+        working-directory: FluidKit/wasm
+        run: |
+          mkdir -p build
+          cp sph.wasm sph.js build/
+          # バージョン情報と使い方を添付
+          cat > build/README.md << 'EOF'
+          # FluidKit WASM Build
+
+          このフォルダには Emscripten でビルドした WebAssembly バイナリが含まれます。
+
+          ## 配置方法
+
+          `sph.wasm` と `sph.js` を `FluidKit/wasm/` にコピーして使ってください:
+
+          ```
+          cp build/sph.wasm FluidKit/wasm/
+          cp build/sph.js   FluidKit/wasm/
+          ```
+
+          その後 `python serve.py` でローカルサーバーを起動してください。
+
+          ## 自動ダウンロード
+
+          ```bash
+          python FluidKit/setup/download_build.py
+          ```
+
+          で GitHub Releases から最新ビルドを自動取得できます。
+          EOF
+
+      # zip にまとめて artifact にアップロード
+      - name: Create zip archive
+        working-directory: FluidKit/wasm
+        run: |
+          zip -r ../../fluidkit-wasm-build.zip build/
+          echo "Archive:"
+          ls -lh ../../fluidkit-wasm-build.zip
+
+      - name: Upload artifact (for release job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-build
+          path: fluidkit-wasm-build.zip
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 2: GitHub Release を作成してアセットを添付
+  # ─────────────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: build-wasm
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-build
+          path: dist/
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.event.inputs.tag || 'dev' }}" >> $GITHUB_OUTPUT
+          fi
+
+      # Release ノートを生成
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ steps.tag.outputs.tag }}"
+          cat > release_notes.md << EOF
+          ## FluidKit ${VERSION}
+
+          ### 📦 WASM ビルド成果物
+          このリリースには Emscripten でビルドした WebAssembly バイナリが含まれます。
+
+          **ビルド環境が不要な場合はこのリリースから取得できます。**
+
+          ### 使い方
+
+          #### 自動ダウンロード（推奨）
+          \`\`\`bash
+          python FluidKit/setup/download_build.py
+          \`\`\`
+
+          #### 手動ダウンロード
+          1. \`fluidkit-wasm-build.zip\` をダウンロード
+          2. 解凍して \`sph.wasm\` と \`sph.js\` を \`FluidKit/wasm/\` にコピー
+          3. \`python FluidKit/wasm/serve.py\` でローカルサーバーを起動
+
+          ### 含まれるファイル
+          - \`sph.wasm\` — SPH シミュレーター WebAssembly バイナリ
+          - \`sph.js\` — Emscripten グルーコード
+          - \`README.md\` — 使い方
+
+          ### 変更ログ
+          $(git log --oneline $(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")..HEAD 2>/dev/null | head -20 || echo "初回リリース")
+          EOF
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   ${{ steps.tag.outputs.tag }}
+          name:       "FluidKit ${{ steps.tag.outputs.tag }}"
+          body_path:  release_notes.md
+          draft:      false
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          files: |
+            dist/fluidkit-wasm-build.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

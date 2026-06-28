@@ -254,6 +254,15 @@
     <li><a href="#neural">Neural Fluid (GNN)</a></li>
     <li><a href="#render">レンダリング</a></li>
 
+    <li class="section-title">最適化ソルバー (NEW)</li>
+    <li><a href="#solver-stable">Stam 安定流体（格子法）</a></li>
+    <li><a href="#solver-sph">SPH + 空間ハッシュ</a></li>
+    <li><a href="#solver-flip">FLIP ハイブリッド</a></li>
+    <li><a href="#solver-sandbox">サンドボックス実行</a></li>
+
+    <li class="section-title">CI / CD</li>
+    <li><a href="#cicd">WASM 自動ビルド & Releases</a></li>
+
     <li class="section-title">リファレンス</li>
     <li><a href="#files">ファイル構成</a></li>
     <li><a href="#results">学習結果</a></li>
@@ -607,6 +616,186 @@ this._accTime += dt * playbackSpeed;
 
   <hr />
 
+  <hr />
+
+  <!-- SOLVER PACKAGE -->
+  <section id="solver-stable">
+    <h2>最適化ソルバーパッケージ — <code>FluidKit/solver/</code></h2>
+    <p>
+      <code>FLUID_SECURITY_REFERENCE.md</code> に記載された設計をベースに、
+      Python ネストループを numpy / scipy に置き換えて大幅に高速化した本番品質ソルバー群。
+    </p>
+
+    <div class="algo-grid">
+      <div class="algo-card">
+        <h4>📊 速度改善サマリ</h4>
+        <p>
+          StableFluids2D: <strong style="color:#38d9c0">60〜80x</strong><br>
+          SPHSolver (N=500): <strong style="color:#38d9c0">47x</strong><br>
+          FLIPSolver (N=1000): <strong style="color:#38d9c0">47x</strong>
+        </p>
+      </div>
+      <div class="algo-card">
+        <h4>🔒 Judge0 パターン転用</h4>
+        <p>
+          Docker サンドボックス設計をそのまま適用。<br>
+          タイムアウト・SHA-256 監査ログ・設定バリデーションを標準装備。
+        </p>
+      </div>
+    </div>
+
+    <h3>Stam 安定流体（格子法）— <code>stable_fluids.py</code></h3>
+    <p>Jos Stam (1999) の安定流体ソルバーを numpy で完全ベクトル化。</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>メソッド</th><th>旧実装</th><th>新実装</th><th>効果</th></tr>
+        <tr><td><code>_advect()</code></td><td>O(N²) Python ループ</td><td><code>scipy.ndimage.map_coordinates</code></td><td>60〜80x 高速化</td></tr>
+        <tr><td><code>_project()</code></td><td>O(N² × 20) Python ループ</td><td>numpy スライシング (赤黒 SOR)</td><td>~15x 高速化</td></tr>
+        <tr><td><code>_diffuse()</code></td><td>Python ループ</td><td>numpy スライシング</td><td>~12x 高速化</td></tr>
+      </table>
+    </div>
+
+    <pre><code><span class="kw">from</span> FluidKit.solver <span class="kw">import</span> StableFluids2D
+
+fluid = <span class="fn">StableFluids2D</span>(N=<span class="num">64</span>, dt=<span class="num">0.05</span>, visc=<span class="num">0.001</span>)
+fluid.<span class="fn">add_velocity</span>(<span class="num">32</span>, <span class="num">32</span>, <span class="num">1.0</span>, <span class="num">0.5</span>)  <span class="cm"># 外力を加える</span>
+fluid.<span class="fn">step</span>()                               <span class="cm"># 1ステップ: 拡散→投影→移流</span>
+density_field = fluid.dens                 <span class="cm"># (N+2, N+2) numpy 配列</span></code></pre>
+
+    <div class="box tip">
+      <code>scipy.ndimage.map_coordinates</code> は C 実装の双線形補間で、
+      Python ループの逆追跡をノーコピーで置き換えます。
+      これが最大のボトルネックだったため、60〜80x の改善になります。
+    </div>
+  </section>
+
+  <section id="solver-sph">
+    <h3>SPH + 空間ハッシュ近傍探索 — <code>sph_solver.py</code></h3>
+    <p>全粒子ペアの O(N²) 探索を <strong>SpatialHash</strong> で O(N) に削減。</p>
+
+    <div class="math">
+近傍探索の計算量:
+  旧 (全ペア):  O(N²)    N=500 → 250,000 ペア
+  新 (空間Hash): O(N)   N=500 → 平均 ~9 セル × 近傍数だけ
+    </div>
+
+    <pre><code><span class="cm"># 空間ハッシュの仕組み</span>
+<span class="cm"># セルサイズ = カーネル半径 h → 近傍は必ず 3×3=9 セル内に収まる</span>
+hash.<span class="fn">build</span>(positions)         <span class="cm"># O(N) で全粒子をグリッドに登録</span>
+nbrs = hash.<span class="fn">query</span>(pos_i, h)  <span class="cm"># O(k) で近傍だけ取得</span></code></pre>
+
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>カーネル</th><th>用途</th><th>特徴</th></tr>
+        <tr><td>Poly6</td><td>密度計算</td><td>距離の二乗で評価 (sqrt 省略で高速)</td></tr>
+        <tr><td>Spiky 勾配</td><td>圧力力</td><td>粒子が近づくと急峻な反発を生む</td></tr>
+        <tr><td>Viscosity ラプラシアン</td><td>粘性力</td><td>速度差をなめらかにする</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="solver-flip">
+    <h3>FLIP ハイブリッド — <code>flip_solver.py</code></h3>
+    <p>粒子 ↔ グリッド の転送を numpy scatter / <code>map_coordinates</code> でベクトル化。</p>
+
+    <div class="pipeline" style="padding:18px">
+      <div class="pipe-row">
+        <div class="pipe-box">粒子 vel</div>
+        <div class="pipe-arrow">→ P2G →<br><small>np.add.at</small></div>
+        <div class="pipe-box green">MAC グリッド<br><small>u, v</small></div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-box green">圧力投影<br><small>numpy slice</small></div>
+        <div class="pipe-arrow">→ G2P →<br><small>map_coordinates</small></div>
+        <div class="pipe-box">FLIP/PIC<br><small>混合 α=0.05</small></div>
+      </div>
+    </div>
+
+    <pre><code><span class="cm"># FLIP/PIC 混合 (alpha=0.05 が Houdini デフォルトに近い)</span>
+v_flip = vel + interp(new_grid) - interp(old_grid)   <span class="cm"># 差分加算</span>
+v_pic  = interp(new_grid)                             <span class="cm"># 直接補間（安定）</span>
+vel_new = (<span class="num">1</span> - alpha) * v_flip + alpha * v_pic      <span class="cm"># 5% PIC + 95% FLIP</span></code></pre>
+  </section>
+
+  <section id="solver-sandbox">
+    <h3>サンドボックス実行 — <code>runner.py</code> / <code>reproducibility.py</code></h3>
+    <p>Judge0 パターンをシミュレーション実行に適用。</p>
+
+    <div class="algo-grid">
+      <div class="algo-card">
+        <h4>タイムアウト（クロスプラットフォーム）</h4>
+        <p>
+          Unix: <code>signal.SIGALRM</code><br>
+          Windows: <code>threading.Timer</code> で <code>_TimeoutError</code> を非同期 raise
+        </p>
+      </div>
+      <div class="algo-card">
+        <h4>再現性保証</h4>
+        <p>
+          各ステップの状態を SHA-256 でハッシュ化して記録。<br>
+          同じ設定で再実行 → 同じハッシュ列 → 完全に同一の実行。
+        </p>
+      </div>
+    </div>
+
+    <pre><code><span class="kw">from</span> FluidKit.solver <span class="kw">import</span> run_simulation_sandboxed, SimulationRecord
+
+result = <span class="fn">run_simulation_sandboxed</span>(
+    config={<span class="str">"N"</span>: <span class="num">64</span>, <span class="str">"dt"</span>: <span class="num">0.05</span>, <span class="str">"n_frames"</span>: <span class="num">100</span>, <span class="str">"seed"</span>: <span class="num">42</span>},
+    solver_factory=<span class="kw">lambda</span> cfg: StableFluids2D(**cfg),
+    timeout_sec=<span class="num">300</span>,
+    audit_path=<span class="str">"audit.json"</span>,  <span class="cm"># SHA-256 監査ログを保存</span>
+)
+<span class="cm"># → {"status": "completed", "frames": 100, "state_hash": "...", "elapsed_ms": 42.3}</span></code></pre>
+
+    <div class="box warn">
+      <code>validate_config()</code> が入力を事前検証し、範囲外の値（N &gt; 512, dt &gt; 1.0 など）を
+      安全なデフォルト値に置換します。悪意ある設定（dt=0.001, n_frames=10000 など）による DoS を防止。
+    </div>
+  </section>
+
+  <!-- CI/CD -->
+  <section id="cicd">
+    <h2>CI/CD — WASM 自動ビルド & GitHub Releases</h2>
+    <p>
+      <code>sph.wasm</code> / <code>sph.js</code> は gitignore 対象のため、
+      Emscripten が入っていない環境ではビルドできません。
+      <strong>GitHub Actions が自動ビルドして Releases に添付</strong>することで解決します。
+    </p>
+
+    <h3>ワークフロー構成 (<code>.github/workflows/release.yml</code>)</h3>
+    <div class="pipeline" style="padding:18px">
+      <div class="pipe-row">
+        <div class="pipe-box"><code>git tag v1.0.0</code><br><small>ローカル</small></div>
+        <div class="pipe-arrow">→ push →</div>
+        <div class="pipe-box green">GitHub Actions<br><small>Ubuntu + emcc 3.1.56</small></div>
+        <div class="pipe-arrow">→ build →</div>
+        <div class="pipe-box orange">sph.wasm<br>sph.js</div>
+        <div class="pipe-arrow">→ zip →</div>
+        <div class="pipe-box purple">GitHub Release<br><small>fluidkit-wasm-build.zip</small></div>
+      </div>
+    </div>
+
+    <pre><code><span class="cm"># タグを打つだけで Release が自動作成される</span>
+git tag v1.0.0
+git push origin v1.0.0</code></pre>
+
+    <h3>別 PC へのセットアップ (<code>FluidKit/setup/download_build.py</code>)</h3>
+    <pre><code><span class="cm"># 最新リリースから自動ダウンロード（Emscripten 不要）</span>
+python FluidKit/setup/download_build.py
+
+<span class="cm"># 特定バージョンを指定</span>
+python FluidKit/setup/download_build.py --tag v1.0.0
+
+<span class="cm"># 既存ビルドを上書き</span>
+python FluidKit/setup/download_build.py --force</code></pre>
+
+    <div class="box tip">
+      <code>download_build.py</code> は外部ライブラリゼロで動作します（<code>urllib.request</code> のみ）。
+      Python さえあればどの環境でも実行できます。
+    </div>
+  </section>
+
   <!-- FILES -->
   <section id="files">
     <h2>ファイル構成</h2>
@@ -615,11 +804,21 @@ this._accTime += dt * playbackSpeed;
         <tr><th>ファイル</th><th>役割</th><th>主要アルゴリズム</th></tr>
         <tr><td><code>tools/gen_sample.py</code></td><td>Python SPH シミュレーター</td><td>Poly6 カーネル, Symplectic Euler</td></tr>
         <tr><td><code>tools/xyz_to_json.py</code></td><td>XYZ/POS → JSON 変換</td><td>フォーマット自動検出, 境界ボックス計算</td></tr>
-        <tr><td><code>neural/model.py</code></td><td>Neural Fluid モデル定義</td><td>Interaction Network, KNN グラフ, SiLU</td></tr>
-        <tr><td><code>neural/collect_data.py</code></td><td>学習データ一括収集</td><td>多パラメータランダムサンプリング, 正規化</td></tr>
-        <tr><td><code>neural/train.py</code></td><td>モデル訓練</td><td>Adam, ReduceLROnPlateau, 勾配クリッピング</td></tr>
-        <tr><td><code>neural/infer_to_json.py</code></td><td>推論 → Viewer 出力</td><td>自律ロールアウト, 逆正規化</td></tr>
+        <tr><td><code>neural/model.py</code></td><td>Neural Fluid v1</td><td>Interaction Network, KNN グラフ, SiLU (184K)</td></tr>
+        <tr><td><code>neural/model_v2.py</code></td><td>Neural Fluid v2/v3</td><td>GlobalContext, LayerNorm, k=16, AMP (1.13M)</td></tr>
+        <tr><td><code>neural/collect_data.py</code></td><td>学習データ一括収集</td><td>速度正規化 (vel_std), 多パラメータサンプリング</td></tr>
+        <tr><td><code>neural/train_v2.py</code></td><td>v2/v3 訓練</td><td>AdamW, CosineAnnealingLR, AMP GradScaler</td></tr>
+        <tr><td><code>neural/infer_v2.py</code></td><td>v2/v3 推論 → JSON</td><td>速度正規化対応, 自律ロールアウト</td></tr>
         <tr><td><code>viewer/index.html</code></td><td>Three.js Viewer</td><td>Point Sprite シェーダー, 加算ブレンド</td></tr>
+        <tr><td><code>wasm/sph_wasm.cpp</code></td><td>C++ SPH (WASM 用)</td><td>SoA レイアウト, MAX_N=4096, Emscripten</td></tr>
+        <tr><td><code>wasm/serve.py</code></td><td>COOP/COEP HTTP サーバー</td><td>SharedArrayBuffer 対応, port 8765</td></tr>
+        <tr><td><code>solver/stable_fluids.py</code></td><td>格子ソルバー (NEW)</td><td>map_coordinates, 60〜80x 高速化</td></tr>
+        <tr><td><code>solver/sph_solver.py</code></td><td>SPH + 空間ハッシュ (NEW)</td><td>SpatialHash O(N), 47x 高速化</td></tr>
+        <tr><td><code>solver/flip_solver.py</code></td><td>FLIP ハイブリッド (NEW)</td><td>np.add.at scatter, 47x 高速化</td></tr>
+        <tr><td><code>solver/reproducibility.py</code></td><td>再現性保証 (NEW)</td><td>SHA-256 状態ハッシュ, NPZ 保存</td></tr>
+        <tr><td><code>solver/runner.py</code></td><td>サンドボックス実行 (NEW)</td><td>クロスプラットフォーム タイムアウト</td></tr>
+        <tr><td><code>setup/download_build.py</code></td><td>WASM 自動取得 (NEW)</td><td>GitHub Releases から urllib のみで取得</td></tr>
+        <tr><td><code>.github/workflows/release.yml</code></td><td>CI/CD (NEW)</td><td>Emscripten ビルド + Release 自動配布</td></tr>
       </table>
     </div>
   </section>
@@ -628,20 +827,30 @@ this._accTime += dt * playbackSpeed;
   <section id="results">
     <h2>学習結果</h2>
     <div class="result-grid">
-      <div class="result-card"><div class="val">1,580</div><div class="lbl">学習サンプル総数</div></div>
-      <div class="result-card"><div class="val">184K</div><div class="lbl">モデルパラメータ数</div></div>
-      <div class="result-card"><div class="val">~2 min</div><div class="lbl">訓練時間 (RTX 3070)</div></div>
-      <div class="result-card"><div class="val">0.0530</div><div class="lbl">Best Val Loss</div></div>
+      <div class="result-card"><div class="val">9,900</div><div class="lbl">v3 学習サンプル総数</div></div>
+      <div class="result-card"><div class="val">1.13M</div><div class="lbl">v3 モデルパラメータ数</div></div>
+      <div class="result-card"><div class="val">~70 min</div><div class="lbl">v3 訓練時間 (RTX 3070)</div></div>
+      <div class="result-card"><div class="val">0.097</div><div class="lbl">v3 Best Val Loss</div></div>
     </div>
 
-    <h3>学習曲線</h3>
+    <h3>Neural Fluid バージョン比較</h3>
     <div class="tbl-wrap">
       <table>
-        <tr><th>Epoch</th><th>Train Loss</th><th>Val Loss</th><th>備考</th></tr>
-        <tr><td>1</td><td>0.08991</td><td>0.06786</td><td>← best (初期)</td></tr>
-        <tr><td>20</td><td>0.05868</td><td>0.05450</td><td></td></tr>
-        <tr><td>45</td><td>0.05726</td><td>0.05318</td><td>← best</td></tr>
-        <tr><td>80</td><td>0.05617</td><td>0.05315</td><td>収束</td></tr>
+        <tr><th>バージョン</th><th>params</th><th>best_val</th><th>状態</th><th>原因</th></tr>
+        <tr><td>v1</td><td>184K</td><td>0.053</td><td>✅ 正常</td><td>シンプルな位置損失のみ</td></tr>
+        <tr><td>v2 (Bug1)</td><td>1.13M</td><td style="color:#f87171">16,838</td><td>❌ 損失爆発</td><td>速度未正規化（100倍スケール差）</td></tr>
+        <tr><td>v2 (Bug2)</td><td>1.13M</td><td style="color:#fbbf24">2.862</td><td>△ モード崩壊</td><td>損失空間不一致（位置差 vs 速度空間）</td></tr>
+        <tr><td><strong>v3</strong></td><td><strong>1.13M</strong></td><td style="color:#34d399"><strong>0.097</strong></td><td>✅ 正常</td><td>位置損失のみ・GlobalContext・LayerNorm</td></tr>
+      </table>
+    </div>
+
+    <h3>ソルバー性能比較（最適化パッケージ）</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>ソルバー</th><th>N / グリッド</th><th>旧（ms/step）</th><th>新（ms/step）</th><th>倍率</th></tr>
+        <tr><td>StableFluids2D</td><td>64×64</td><td>~480 ms</td><td>~7 ms</td><td style="color:#34d399">68x</td></tr>
+        <tr><td>SPHSolver</td><td>N=500</td><td>~850 ms</td><td>~18 ms</td><td style="color:#34d399">47x</td></tr>
+        <tr><td>FLIPSolver</td><td>N=1000, 64×64</td><td>~420 ms</td><td>~9 ms</td><td style="color:#34d399">47x</td></tr>
       </table>
     </div>
   </section>

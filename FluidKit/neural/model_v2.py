@@ -31,6 +31,12 @@ def mlp(dims: list[int], act=nn.SiLU, last_act=False) -> nn.Sequential:
 
 
 def knn_graph(pos: torch.Tensor, k: int = 16):
+    """O(N^2) フォールバック実装（近傍インデックス未提供時のみ使用）。
+
+    学習/推論の通常経路では、近傍は cKDTree で事前計算し forward() に
+    渡すため本関数は呼ばれない。前計算インデックスが無い場合（単体テスト等）
+    のフォールバックとして残す。
+    """
     B, N, _ = pos.shape
     diff = pos.unsqueeze(2) - pos.unsqueeze(1)    # (B,N,N,3)
     dist = (diff ** 2).sum(-1)                     # (B,N,N)
@@ -127,7 +133,13 @@ class NeuralFluidV2(nn.Module):
         self.dec_pos = mlp([latent, hidden, 3])
         self.dec_vel = mlp([latent, hidden, 3])
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, nbr: torch.Tensor = None):
+        """
+        x   : (B,N,6) [pos+vel]
+        nbr : (B,N,k) 近傍インデックス（long tensor）。
+              事前計算済みインデックス（cKDTree 由来）を渡すのが通常経路。
+              None の場合のみ knn_graph() の O(N^2) フォールバックで計算する。
+        """
         B, N, _ = x.shape
         pos = x[..., :3]   # (B,N,3)
 
@@ -138,8 +150,9 @@ class NeuralFluidV2(nn.Module):
         g = self.global_ctx(h)                      # (B,N,L)
         h = self.ctx_proj(torch.cat([h, g], dim=-1))# (B,N,L)
 
-        # KNN グラフ
-        nbr = knn_graph(pos, self.k)                # (B,N,k)
+        # KNN グラフ（事前計算インデックスを利用。無い場合のみ O(N^2) フォールバック）
+        if nbr is None:
+            nbr = knn_graph(pos, self.k)            # (B,N,k)
 
         # メッセージパッシング
         for step in range(self.n_mp):
@@ -161,9 +174,10 @@ class NeuralFluidV2(nn.Module):
         d_vel = self.dec_vel(h)   # (B,N,3)
         return d_pos, d_vel
 
-    def predict_next(self, x: torch.Tensor):
-        """x: (B,N,6) → 次フレーム (B,N,6) [pos+vel]"""
-        d_pos, d_vel = self.forward(x)
+    def predict_next(self, x: torch.Tensor, nbr: torch.Tensor = None):
+        """x: (B,N,6) → 次フレーム (B,N,6) [pos+vel]
+        nbr: (B,N,k) 事前計算済み近傍インデックス（forward()参照）"""
+        d_pos, d_vel = self.forward(x, nbr)
         next_pos = x[..., :3] + d_pos
         next_vel = x[..., 3:] + d_vel
         return torch.cat([next_pos, next_vel], dim=-1)
@@ -221,11 +235,14 @@ if __name__ == "__main__":
 
     B, N = 2, 400
     x = torch.randn(B, N, 6)
-    d_pos, d_vel = model(x)
+
+    # 事前計算済み近傍インデックス（本来は cKDTree 由来）を模擬
+    nbr = knn_graph(x[..., :3], model.k)
+    d_pos, d_vel = model(x, nbr)
     print(f"Input {x.shape} → Δpos {d_pos.shape}, Δvel {d_vel.shape}")
 
     loss_fn = FluidLossV2()
-    pred = model.predict_next(x)
+    pred = model.predict_next(x, nbr)
     target_y = torch.randn(B, N, 3)
     loss, bd  = loss_fn(pred, x, target_y)
     print(f"Loss: {loss.item():.4f}  {bd}")

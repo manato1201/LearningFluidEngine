@@ -149,7 +149,14 @@ def main():
         k_neighbors = cfg.get("k",      16),
         n_mp_steps  = cfg.get("mp",     3),
     )
-    model.load_state_dict(ckpt["model_state"])
+    # fp16 チェックポイント（train_v2.py の best_fp16.pt / last_fp16.pt）にも対応:
+    # 半精度の state_dict を fp32 モデルへロードする際は事前に float() へ昇格する
+    # 必要がある（load_state_dict は dtype 不一致をそのままでは受け付けない）。
+    state_dict = ckpt["model_state"]
+    if ckpt.get("fp16", False):
+        state_dict = {k: (v.float() if v.is_floating_point() else v)
+                      for k, v in state_dict.items()}
+    model.load_state_dict(state_dict)
     model.to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)

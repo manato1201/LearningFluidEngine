@@ -10,7 +10,7 @@ Three.js Viewer 用の frames.json を生成します。
     python gen_sample.py --frames 150 --particles 2000
 """
 
-import json, math, random, argparse, sys
+import json, math, random, argparse, sys, gzip
 from pathlib import Path
 
 import numpy as np
@@ -221,7 +221,7 @@ class SimpleSPH:
 #  Main
 # ──────────────────────────────────────────
 
-def run(preset_name: str, frames: int, dt: float, output: Path, seed: int):
+def run(preset_name: str, frames: int, dt: float, output: Path, seed: int, use_gzip: bool = False):
     preset = PRESETS[preset_name]
     print(f"[FluidKit] preset={preset_name}  particles={preset['particle_count']}  frames={frames}")
     print(f"           {preset['description']}")
@@ -256,12 +256,21 @@ def run(preset_name: str, frames: int, dt: float, output: Path, seed: int):
     }
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    with open(output, "w") as f:
-        json.dump({"metadata": meta, "frames": frame_data, "speeds": speed_data}, f,
-                  separators=(",", ":"))
+    payload = {"metadata": meta, "frames": frame_data, "speeds": speed_data}
 
-    size_kb = output.stat().st_size / 1024
-    print(f"[FluidKit] saved → {output}  ({size_kb:.1f} KB)")
+    if use_gzip:
+        # --gzip 指定時は <name>.json.gz として圧縮出力する（デフォルト動作は変更しない）
+        gz_output = output.with_suffix(output.suffix + ".gz") if output.suffix == ".json" \
+            else Path(str(output) + ".gz")
+        with gzip.open(gz_output, "wt", encoding="utf-8") as f:
+            json.dump(payload, f, separators=(",", ":"))
+        size_kb = gz_output.stat().st_size / 1024
+        print(f"[FluidKit] saved (gzip) → {gz_output}  ({size_kb:.1f} KB)")
+    else:
+        with open(output, "w") as f:
+            json.dump(payload, f, separators=(",", ":"))
+        size_kb = output.stat().st_size / 1024
+        print(f"[FluidKit] saved → {output}  ({size_kb:.1f} KB)")
 
 
 def main():
@@ -271,12 +280,14 @@ def main():
     ap.add_argument("--dt",        type=float, default=0.016)
     ap.add_argument("--seed",      type=int,   default=42)
     ap.add_argument("--output",    default=None)
+    ap.add_argument("--gzip",      action="store_true",
+                    help="出力を <name>.json.gz として gzip 圧縮する（デフォルトは非圧縮 .json）")
     args = ap.parse_args()
 
     out = Path(args.output) if args.output else \
           Path(__file__).parent.parent / "viewer" / "data" / f"{args.preset}.json"
 
-    run(args.preset, args.frames, args.dt, out, args.seed)
+    run(args.preset, args.frames, args.dt, out, args.seed, use_gzip=args.gzip)
 
 
 if __name__ == "__main__":

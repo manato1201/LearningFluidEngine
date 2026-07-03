@@ -25,15 +25,35 @@ from torch.utils.data import Dataset, DataLoader
 from model_v2 import NeuralFluidV2, FluidLossV2, count_params
 
 
+def half_state_dict(model: nn.Module) -> dict:
+    """学習中のモデル自体には触れず、CPU上に複製した state_dict のみを
+    fp16化して返す（model.half() を実モデルに適用すると AMP/optimizer の
+    状態と整合しなくなるため厳禁）。整数バッファ等（非浮動小数）はそのまま維持する。
+    """
+    return {k: (v.detach().cpu().half() if v.is_floating_point() else v.detach().cpu())
+            for k, v in model.state_dict().items()}
+
+
 class FluidDataset(Dataset):
-    """X: (T,N,6) pos+vel, Y: (T,N,3) next pos, NBR: (T,N,k) 事前計算済み近傍インデックス（cKDTree由来）"""
+    """X: (T,N,6) pos+vel, Y: (T,N,3) next pos, NBR: (T,N,k) 事前計算済み近傍インデックス（cKDTree由来）
+
+    データセット全体をメモリに読み込まず np.load(..., mmap_mode='r') で
+    メモリマップし、__getitem__ でアクセスされたスライスだけをオンデマンドで
+    torch.tensor に変換する（torch は numpy のような mmap を直接サポートしない
+    ため、__init__ で全体を torch.tensor 化すると mmap の意味がなくなる）。
+    """
     def __init__(self, X_path, Y_path, NBR_path):
-        self.X   = torch.tensor(np.load(X_path),   dtype=torch.float32)
-        self.Y   = torch.tensor(np.load(Y_path),   dtype=torch.float32)
-        self.NBR = torch.tensor(np.load(NBR_path), dtype=torch.long)
+        self.X   = np.load(X_path,   mmap_mode='r')
+        self.Y   = np.load(Y_path,   mmap_mode='r')
+        self.NBR = np.load(NBR_path, mmap_mode='r')
 
     def __len__(self): return len(self.X)
-    def __getitem__(self, i): return self.X[i], self.Y[i], self.NBR[i]
+
+    def __getitem__(self, i):
+        x   = torch.tensor(np.asarray(self.X[i]),   dtype=torch.float32)
+        y   = torch.tensor(np.asarray(self.Y[i]),   dtype=torch.float32)
+        nbr = torch.tensor(np.asarray(self.NBR[i]), dtype=torch.long)
+        return x, y, nbr
 
 
 def main():
@@ -127,6 +147,10 @@ def main():
             torch.save({"model_state": model.state_dict(),
                         "config": vars(args), "best_val": best_val},
                        ckpt_dir / "best.pt")
+            # 追加: fp16 版チェックポイント（既存 fp32 の best.pt は変更せず維持）
+            torch.save({"model_state": half_state_dict(model),
+                        "config": vars(args), "best_val": best_val, "fp16": True},
+                       ckpt_dir / "best_fp16.pt")
             mark = " ← best"
 
         if ep % 10 == 0 or ep == 1:
@@ -137,6 +161,9 @@ def main():
 
     torch.save({"model_state": model.state_dict(), "config": vars(args)},
                ckpt_dir / "last.pt")
+    # 追加: fp16 版チェックポイント（既存 fp32 の last.pt は変更せず維持）
+    torch.save({"model_state": half_state_dict(model), "config": vars(args), "fp16": True},
+               ckpt_dir / "last_fp16.pt")
     with open(ckpt_dir / "history.json", "w") as f:
         json.dump(history, f, indent=2)
 

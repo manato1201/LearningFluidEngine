@@ -26,12 +26,14 @@ from model_v2 import NeuralFluidV2, FluidLossV2, count_params
 
 
 class FluidDataset(Dataset):
-    def __init__(self, X_path, Y_path):
-        self.X = torch.tensor(np.load(X_path), dtype=torch.float32)
-        self.Y = torch.tensor(np.load(Y_path), dtype=torch.float32)
+    """X: (T,N,6) pos+vel, Y: (T,N,3) next pos, NBR: (T,N,k) 事前計算済み近傍インデックス（cKDTree由来）"""
+    def __init__(self, X_path, Y_path, NBR_path):
+        self.X   = torch.tensor(np.load(X_path),   dtype=torch.float32)
+        self.Y   = torch.tensor(np.load(Y_path),   dtype=torch.float32)
+        self.NBR = torch.tensor(np.load(NBR_path), dtype=torch.long)
 
     def __len__(self): return len(self.X)
-    def __getitem__(self, i): return self.X[i], self.Y[i]
+    def __getitem__(self, i): return self.X[i], self.Y[i], self.NBR[i]
 
 
 def main():
@@ -52,13 +54,17 @@ def main():
         print(f"[ERROR] データセット未作成: {ds}")
         print("  先に collect_data.py --simulations 100 --output ./dataset_v2 を実行")
         return
+    if not (ds / "NBR_train.npy").exists():
+        print(f"[ERROR] 近傍インデックス未作成: {ds}/NBR_train.npy")
+        print("  collect_data.py を最新版で再実行してください（cKDTree事前計算に対応）")
+        return
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n[train_v2] デバイス: {device}")
 
     # データ
-    tr_ds = FluidDataset(ds/"X_train.npy", ds/"Y_train.npy")
-    va_ds = FluidDataset(ds/"X_val.npy",   ds/"Y_val.npy")
+    tr_ds = FluidDataset(ds/"X_train.npy", ds/"Y_train.npy", ds/"NBR_train.npy")
+    va_ds = FluidDataset(ds/"X_val.npy",   ds/"Y_val.npy",   ds/"NBR_val.npy")
     tr_dl = DataLoader(tr_ds, args.batch, shuffle=True,  num_workers=0, pin_memory=True)
     va_dl = DataLoader(va_ds, args.batch, shuffle=False, num_workers=0, pin_memory=True)
 
@@ -85,10 +91,10 @@ def main():
         # 訓練
         model.train()
         tr_loss = 0.0
-        for X, Y in tr_dl:
-            X, Y = X.to(device), Y.to(device)
+        for X, Y, NBR in tr_dl:
+            X, Y, NBR = X.to(device), Y.to(device), NBR.to(device)
             with autocast():
-                pred     = model.predict_next(X)
+                pred     = model.predict_next(X, NBR)
                 loss, _  = loss_fn(pred, X, Y)
             opt.zero_grad()
             scaler.scale(loss).backward()
@@ -103,10 +109,10 @@ def main():
         model.eval()
         va_loss = 0.0
         with torch.no_grad():
-            for X, Y in va_dl:
-                X, Y = X.to(device), Y.to(device)
+            for X, Y, NBR in va_dl:
+                X, Y, NBR = X.to(device), Y.to(device), NBR.to(device)
                 with autocast():
-                    pred    = model.predict_next(X)
+                    pred    = model.predict_next(X, NBR)
                     loss, _ = loss_fn(pred, X, Y)
                 va_loss += loss.item() * len(X)
         va_loss /= len(va_ds)

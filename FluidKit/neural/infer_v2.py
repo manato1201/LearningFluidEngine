@@ -13,11 +13,31 @@ import json, sys, argparse
 import numpy as np
 import torch
 from pathlib import Path
+from scipy.spatial import cKDTree
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 from gen_sample import SimpleSPH, PRESETS
 
 from model_v2 import NeuralFluidV2
+
+
+def compute_knn_frame(pos: torch.Tensor, k: int) -> torch.Tensor:
+    """1フレーム分の pos (B,N,3) から cKDTree で近傍インデックスを計算する。
+
+    推論はロールアウトで位置が逐次生成されるため事前計算はできない。
+    N〜400程度なら CPU上のcKDTreeで十分高速なため、毎フレームここで計算する。
+    GPUテンソルは直接cKDTreeに渡せないため .cpu().numpy() を経由する。
+    """
+    pos_np = pos.detach().cpu().numpy()          # (B,N,3)
+    B = pos_np.shape[0]
+    idx_batches = []
+    for b in range(B):
+        tree = cKDTree(pos_np[b])
+        _, idx = tree.query(pos_np[b], k=k + 1)   # 自分自身を含め k+1 個
+        idx = idx[:, 1:]                           # 自分自身（距離0）を除外
+        idx_batches.append(idx)
+    nbr = np.stack(idx_batches, axis=0).astype(np.int64)   # (B,N,k)
+    return torch.tensor(nbr, dtype=torch.long, device=pos.device)
 
 
 # ──────────────────────────────────────────
@@ -52,10 +72,14 @@ def get_initial_state(preset_name: str, n_particles: int,
 #  推論ループ（v2: モデルが pos+vel を出力）
 # ──────────────────────────────────────────
 
-def run_inference(model, x0: torch.Tensor, frames: int, device):
+def run_inference(model, x0: torch.Tensor, frames: int, device, k: int):
     """
     x0: (1, N, 6) normalized [pos_norm | vel_norm]
+    k : 近傍数（model.k と一致させる）
     Returns: list of (N,3) normalized positions
+
+    位置はロールアウト中に逐次生成されるため事前計算できない。
+    フレームごとに現在位置から cKDTree で近傍を計算し、モデルに渡す。
     """
     model.eval()
     x = x0.to(device)
@@ -63,8 +87,9 @@ def run_inference(model, x0: torch.Tensor, frames: int, device):
 
     with torch.no_grad():
         for _ in range(frames):
+            nbr = compute_knn_frame(x[..., :3], k)   # (1,N,k) — 現フレームの pos から計算
             # v2 の predict_next は (B,N,6) [next_pos_norm | next_vel_norm] を返す
-            x_next = model.predict_next(x)   # (1,N,6)
+            x_next = model.predict_next(x, nbr)   # (1,N,6)
             results.append(x_next[..., :3].squeeze(0).cpu().numpy())  # (N,3)
             x = x_next
 
@@ -136,7 +161,7 @@ def main():
     x0 = get_initial_state(args.preset, n_particles, pos_min, pos_max, vel_std, args.seed)
 
     # 推論
-    norm_frames = run_inference(model, x0, args.frames, device)
+    norm_frames = run_inference(model, x0, args.frames, device, k=model.k)
 
     # 逆正規化 → flat JSON
     frame_data = []

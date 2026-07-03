@@ -197,17 +197,16 @@ class SPHSolver:
 
             # 圧力力: -∇p
             prs_avg = (prs[i] + prs[nbrs_arr]) / 2.0
+            prs_coeff = mass[nbrs_arr] * prs_avg / rho[nbrs_arr]   # (k,)
             prs_force = -(
-                mass[nbrs_arr] * prs_avg / rho[nbrs_arr, None]
-                * self._W_spiky_grad(r_vecs, rs)
+                prs_coeff[:, None] * self._W_spiky_grad(r_vecs, rs)
             ).sum(axis=0)
 
             # 粘性力: μ ∇²u
             dv = vel[nbrs_arr] - vel[i]
             visc_w = self._W_visc_lap(rs)
-            visc_force = self.mu * (
-                mass[nbrs_arr] * visc_w / rho[nbrs_arr] * dv.T
-            ).T.sum(axis=0) / rho[i]
+            visc_coeff = mass[nbrs_arr] * visc_w / rho[nbrs_arr]  # (k,)
+            visc_force = self.mu * (visc_coeff[:, None] * dv).sum(axis=0) / rho[i]
 
             acc[i] += prs_force / rho[i] + visc_force
 

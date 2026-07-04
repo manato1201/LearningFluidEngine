@@ -4,7 +4,7 @@
 
 1. [流体シミュレーション層 (gen_sample.py)](#1-流体シミュレーション層)
 2. [fluid-engine-dev コアエンジン](#2-fluid-engine-dev-コアエンジン)
-3. [Neural Fluid 層 (model.py / train.py)](#3-neural-fluid-層)
+3. [Neural Fluid 層 (model_v2.py / train_v2.py)](#3-neural-fluid-層)
 4. [レンダリング層 (Three.js Viewer)](#4-レンダリング層)
 5. [最適化ソルバーパッケージ (solver/)](#5-最適化ソルバーパッケージ) ★NEW
 6. [CI/CD — WASM 自動ビルド & Releases](#6-cicd--wasm-自動ビルド--releases) ★NEW
@@ -206,7 +206,7 @@ CFL 条件を超える $\Delta t$ でも安定（無条件安定）。
 
 ### 3-1. モデルアーキテクチャ（Interaction Network）
 
-`neural/model.py` の `NeuralFluidModel` クラス。
+`neural/model_v2.py` の `NeuralFluidV2` クラス。
 
 **全体構造**：
 ```
@@ -544,14 +544,15 @@ gen_sample.py (SimpleSPH)          ───────────────
                                                     ▼
 【Neural Fluid 学習】                    【Three.js Viewer】
 collect_data.py                         index.html
-  └─ パラメータ多様化シミュ                 ├─ Point Sprite シェーダー
-        ↓ .npy データセット               ├─ KNN グラフ可視化
-model.py (Interaction Network)          ├─ カラーマッピング
-  ├─ ParticleEncoder (MLP)             └─ 時間ベースアニメーション
-  ├─ KNN グラフ + Edge MLP
-  └─ Decoder (MLP → Δpos)
+  ├─ パラメータ多様化シミュ                 ├─ Point Sprite シェーダー
+  └─ cKDTree で近傍を事前計算            ├─ KNN グラフ可視化
+        ↓ .npy データセット               ├─ カラーマッピング
+model_v2.py (NeuralFluidV2)             └─ 時間ベースアニメーション
+  ├─ ParticleEncoder + GlobalContext
+  ├─ KNN グラフ(事前計算) + Edge MLP
+  └─ Decoder (MLP → Δpos, Δvel)
         ↓
-train.py (Adam + MGPCG → 訓練)
+train_v2.py (AdamW + AMP + CosineAnnealing → 訓練)
         ↓
-infer_to_json.py ──────────────────────► frames.json
+infer_v2.py ──────────────────────► frames.json
 ```

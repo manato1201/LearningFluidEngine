@@ -28,6 +28,10 @@ from scipy.spatial import cKDTree
 sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 from gen_sample import SimpleSPH, PRESETS
 
+# 正規化/逆正規化の共通ロジック
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils import normalize_pos, normalize_vel
+
 # model_v2.py の NeuralFluidV2 デフォルト k と一致させる
 K_NEIGHBORS = 16
 
@@ -162,21 +166,14 @@ def collect(n_sims: int, frames: int, dt: float, val_ratio: float,
     bounds = PRESETS[BASE_PRESET]["bounds"]
     pos_min = np.array([bounds[0], bounds[2], bounds[4]], dtype=np.float32)
     pos_max = np.array([bounds[1], bounds[3], bounds[5]], dtype=np.float32)
-    pos_range = pos_max - pos_min
-
-    def norm_pos(p):
-        return (p - pos_min) / pos_range * 2 - 1   # -1〜1
 
     # 速度の正規化: 全サンプルの速度成分の標準偏差でスケール
     vel_std = X_all[..., 3:].std(axis=(0, 1)).clip(min=1e-6)
 
-    def norm_vel(v):
-        return v / (vel_std * 3.0)   # ±3σ が概ね ±1 に収まる
-
     X_norm = X_all.copy()
-    X_norm[..., :3] = norm_pos(X_all[..., :3])
-    X_norm[..., 3:] = norm_vel(X_all[..., 3:])
-    Y_norm = norm_pos(Y_all)
+    X_norm[..., :3] = normalize_pos(X_all[..., :3], pos_min, pos_max)
+    X_norm[..., 3:] = normalize_vel(X_all[..., 3:], vel_std)
+    Y_norm = normalize_pos(Y_all, pos_min, pos_max)
 
     # train / val split
     n_val = max(1, int(len(X_norm) * val_ratio))

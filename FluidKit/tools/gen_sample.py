@@ -140,7 +140,7 @@ class SimpleSPH:
     SPHSolver（空間ハッシュ + numpy ベクトル化）に委譲するラッパー。
 
     公開 API (pos, vel, step, snapshot, velocities_flat) は
-    neural/collect_data.py, neural/infer_to_json.py, neural/infer_v2.py が
+    neural/collect_data.py, neural/infer_v2.py が
     直接依存しているため変更しない。
     """
 

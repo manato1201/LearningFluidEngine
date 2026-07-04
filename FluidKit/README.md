@@ -15,11 +15,8 @@ FluidKit/
 │   └── blender_export.py   ← XYZ → NPZ（Blender連携用）
 ├── neural/
 │   ├── collect_data.py     ← 学習データ収集（速度正規化対応）
-│   ├── model.py            ← Neural Fluid v1（GNN, 184K params）
 │   ├── model_v2.py         ← Neural Fluid v2/v3（GNN, 1.13M params）
-│   ├── train.py            ← v1 訓練スクリプト
 │   ├── train_v2.py         ← v2/v3 訓練スクリプト（AMP・CosineAnnealing）
-│   ├── infer_to_json.py    ← v1 推論 → Viewer JSON出力
 │   └── infer_v2.py         ← v2/v3 推論 → Viewer JSON出力（速度正規化対応）
 ├── wasm/
 │   ├── sph_wasm.cpp        ← リアルタイムSPH（外部依存ゼロ C++）

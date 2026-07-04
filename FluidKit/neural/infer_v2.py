@@ -18,6 +18,10 @@ from scipy.spatial import cKDTree
 sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 from gen_sample import SimpleSPH, PRESETS
 
+# 正規化/逆正規化の共通ロジック
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils import normalize_pos, normalize_vel, denormalize_pos
+
 from model_v2 import NeuralFluidV2
 
 
@@ -60,9 +64,8 @@ def get_initial_state(preset_name: str, n_particles: int,
     pos = np.array(sph.pos[:n_particles], dtype=np.float32)   # (N,3)
     vel = np.array(sph.vel[:n_particles], dtype=np.float32)   # (N,3)
 
-    pos_range = pos_max - pos_min
-    pos_norm = (pos - pos_min) / pos_range * 2 - 1             # [-1,1]
-    vel_norm = vel / (vel_std * 3.0)                           # ±3σ → ±1
+    pos_norm = normalize_pos(pos, pos_min, pos_max)            # [-1,1]
+    vel_norm = normalize_vel(vel, vel_std)                     # ±3σ → ±1
 
     x = np.concatenate([pos_norm, vel_norm], axis=-1)          # (N,6)
     return torch.tensor(x, dtype=torch.float32).unsqueeze(0)   # (1,N,6)
@@ -101,8 +104,7 @@ def run_inference(model, x0: torch.Tensor, frames: int, device, k: int):
 # ──────────────────────────────────────────
 
 def denorm_pos(pos_norm: np.ndarray, pos_min, pos_max):
-    pos_range = pos_max - pos_min
-    return (pos_norm + 1) / 2 * pos_range + pos_min
+    return denormalize_pos(pos_norm, pos_min, pos_max)
 
 
 # ──────────────────────────────────────────

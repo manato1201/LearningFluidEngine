@@ -342,9 +342,9 @@
         <div class="pipe-arrow">→</div>
         <div class="pipe-box">.npy データセット</div>
         <div class="pipe-arrow">→</div>
-        <div class="pipe-box green">train.py<br><small>GNN 訓練</small></div>
+        <div class="pipe-box green">train_v2.py<br><small>GNN 訓練</small></div>
         <div class="pipe-arrow">→</div>
-        <div class="pipe-box green">infer_to_json.py<br><small>推論</small></div>
+        <div class="pipe-box green">infer_v2.py<br><small>推論</small></div>
         <div class="pipe-arrow">→</div>
         <div class="pipe-box orange">frames.json</div>
         <div class="pipe-arrow">→</div>
@@ -379,9 +379,9 @@ python tools/xyz_to_json.py --input ./sph_output --output viewer/data/sph.json</
       <li>
         <div class="num green">4</div>
         <div><strong>Neural Fluid 訓練</strong><br>
-          <pre><code>python neural/collect_data.py --simulations 20
-python neural/train.py --epochs 80
-python neural/infer_to_json.py --checkpoint ./neural/checkpoints/best.pt</code></pre>
+          <pre><code>python neural/collect_data.py --simulations 20 --output ./neural/dataset_v2
+python neural/train_v2.py --dataset ./neural/dataset_v2 --epochs 80
+python neural/infer_v2.py --checkpoint ./neural/checkpoints_v2/best.pt</code></pre>
         </div>
       </li>
     </ul>
@@ -804,7 +804,6 @@ python FluidKit/setup/download_build.py --force</code></pre>
         <tr><th>ファイル</th><th>役割</th><th>主要アルゴリズム</th></tr>
         <tr><td><code>tools/gen_sample.py</code></td><td>Python SPH シミュレーター</td><td>Poly6 カーネル, Symplectic Euler</td></tr>
         <tr><td><code>tools/xyz_to_json.py</code></td><td>XYZ/POS → JSON 変換</td><td>フォーマット自動検出, 境界ボックス計算</td></tr>
-        <tr><td><code>neural/model.py</code></td><td>Neural Fluid v1</td><td>Interaction Network, KNN グラフ, SiLU (184K)</td></tr>
         <tr><td><code>neural/model_v2.py</code></td><td>Neural Fluid v2/v3</td><td>GlobalContext, LayerNorm, k=16, AMP (1.13M)</td></tr>
         <tr><td><code>neural/collect_data.py</code></td><td>学習データ一括収集</td><td>速度正規化 (vel_std), 多パラメータサンプリング</td></tr>
         <tr><td><code>neural/train_v2.py</code></td><td>v2/v3 訓練</td><td>AdamW, CosineAnnealingLR, AMP GradScaler</td></tr>

@@ -207,7 +207,22 @@ class FLIPSolver:
         return np.stack([u_new, v_new], axis=1)
 
     def _project_mac(self) -> tuple[np.ndarray, np.ndarray]:
-        """簡易圧力投影 (MAC グリッド上の発散ゼロ化)。"""
+        """
+        簡易圧力投影 (MAC グリッド上の発散ゼロ化)。
+
+        NOTE (Phase 3 検証結果): scipy.sparse.linalg.cg による置換を
+        試みたが不採用とした。境界条件 (missing neighbor = p=0 の
+        Dirichlet 条件) の導出・実装は正しく検証済みで、発散量も
+        旧実装と同等以上、CG warm-start でも数値的には安定していた。
+        しかし疎行列 CG は今回のグリッド規模 (Nx=Ny=16〜64) では
+        GS より大幅に遅く (Nx=16: 旧 0.46ms→新 0.84ms、
+        Nx=64: 旧 0.76ms→新 4.80ms、warm-start込みでも収束に
+        ~174イテレーション要した)、計画の目標である性能改善を
+        満たせなかったため差し戻した。scipy疎行列CSRのmatvecは
+        密配列スライス演算よりオーバーヘッドが大きく、この規模の
+        固定5点ステンシル問題では密配列ベースの Gauss-Seidel が
+        構造的に有利。
+        """
         Nx, Ny = self.Nx, self.Ny
         dx = self.dx
         u, v = self.grid.u.copy(), self.grid.v.copy()

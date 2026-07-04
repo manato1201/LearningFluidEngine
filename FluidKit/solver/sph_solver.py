@@ -187,7 +187,8 @@ class SPHSolver:
             nbrs = self._hash.query(pos[i], self.h)
             if len(nbrs) <= 1:
                 continue
-            nbrs_arr = np.array([j for j in nbrs if j != i])
+            nbrs_arr = np.asarray(nbrs)
+            nbrs_arr = nbrs_arr[nbrs_arr != i]
             if len(nbrs_arr) == 0:
                 continue
 

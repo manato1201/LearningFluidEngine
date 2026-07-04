@@ -1,0 +1,35 @@
+name: Tests
+
+# ─────────────────────────────────────────────────────────────────────
+# release.yml は push tag / workflow_dispatch でしか走らないため、
+# PR や main への push のたびに pytest を回す軽量ワークフローを別途用意する。
+# ─────────────────────────────────────────────────────────────────────
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  pytest:
+    name: Run FluidKit test suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # FluidKit/tests/ は numpy/scipy(間接: solver 内部)/pytest のみに依存し、
+          # torch は使用しない（neural/ 配下のテストを追加する場合は要再検討）。
+          pip install numpy scipy pytest
+
+      - name: Run pytest
+        run: pytest FluidKit/tests/ -v

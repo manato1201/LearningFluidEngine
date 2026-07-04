@@ -152,15 +152,16 @@ class FLIPSolver:
                 np.add.at(self.grid.weight_v, (xi, yj), w)
 
         # 重み正規化 (ゼロ除算回避)
-        self.grid.u = np.where(
-            self.grid.weight_u > 1e-8,
-            self.grid.u / self.grid.weight_u,
-            0.0,
+        # np.where は両分岐を評価するため weight=0 のセルで 0/0 の
+        # RuntimeWarning が出る（結果自体は正しく 0.0 になる）。
+        # np.divide の where= で分岐前に除算自体をスキップする。
+        self.grid.u = np.divide(
+            self.grid.u, self.grid.weight_u,
+            out=np.zeros_like(self.grid.u), where=self.grid.weight_u > 1e-8,
         )
-        self.grid.v = np.where(
-            self.grid.weight_v > 1e-8,
-            self.grid.v / self.grid.weight_v,
-            0.0,
+        self.grid.v = np.divide(
+            self.grid.v, self.grid.weight_v,
+            out=np.zeros_like(self.grid.v), where=self.grid.weight_v > 1e-8,
         )
 
     # ──────────────────────────────────────────────────────

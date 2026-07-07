@@ -14,10 +14,17 @@ FluidKit/
 │   ├── xyz_to_json.py      ← sph_sim XYZ出力 → JSON 変換
 │   └── blender_export.py   ← XYZ → NPZ（Blender連携用）
 ├── neural/
-│   ├── collect_data.py     ← 学習データ収集（速度正規化対応）
+│   ├── collect_data.py     ← 学習データ収集（速度正規化・cKDTree近傍事前計算）
 │   ├── model_v2.py         ← Neural Fluid v2/v3（GNN, 1.13M params）
-│   ├── train_v2.py         ← v2/v3 訓練スクリプト（AMP・CosineAnnealing）
+│   ├── train_v2.py         ← v2/v3 訓練スクリプト（AMP・CosineAnnealing・mmapデータセット）
 │   └── infer_v2.py         ← v2/v3 推論 → Viewer JSON出力（速度正規化対応）
+├── solver/                 ← 最適化済みソルバーパッケージ
+│   ├── stable_fluids.py    ← Stam 安定流体（格子法, numpy ベクトル化）
+│   ├── sph_solver.py       ← SPH + 空間ハッシュ近傍探索
+│   ├── flip_solver.py      ← FLIP ハイブリッド（numpy scatter）
+│   └── reproducibility.py  ← 再現性保証（SHA-256 状態ハッシュ）
+├── utils.py                ← 正規化/逆正規化の共通ユーティリティ
+├── tests/                  ← pytest テストスイート（物性・再現性・I/O）
 ├── wasm/
 │   ├── sph_wasm.cpp        ← リアルタイムSPH（外部依存ゼロ C++）
 │   ├── fluid_wasm.html     ← ブラウザ上で動くリアルタイムビューワー
@@ -29,7 +36,8 @@ FluidKit/
 └── docs/
     ├── index.html          ← プロジェクトドキュメント
     ├── algorithms.html     ← SPH・GNN アルゴリズム解説（MathJax）
-    └── ALGORITHMS.md       ← アルゴリズム解説（Markdown）
+    ├── ALGORITHMS.md       ← アルゴリズム解説（Markdown）
+    └── PERF_RESULTS.md     ← 性能改善の実測記録
 ```
 
 ## フェーズ別クイックスタート
@@ -41,9 +49,12 @@ cd tools
 python gen_sample.py --preset water_drop --frames 80
 python gen_sample.py --preset smoke       --frames 80
 python gen_sample.py --preset splash      --frames 80
+
+# --gzip を付けると <preset>.json.gz として圧縮出力（サイズ約 60〜70% 減）
+python gen_sample.py --preset water_drop --frames 80 --gzip
 ```
 
-生成された `viewer/data/*.json` を Viewer にドラッグ&ドロップ。
+生成された `viewer/data/*.json`（`.json.gz` も対応）を Viewer にドラッグ&ドロップ。
 
 ### Phase 2｜Three.js Viewer（インストール不要）
 
@@ -96,9 +107,9 @@ gravity / viscosity / stiffness をスライダーでリアルタイム調整可
 ### Phase 6｜Neural Fluid v3（GNN）
 
 ```bash
-pip install torch numpy
+pip install torch numpy scipy
 
-# Step 1: 学習データ生成（100シミュレーション）
+# Step 1: 学習データ生成（100シミュレーション、cKDTreeで近傍を事前計算）
 cd neural
 python collect_data.py --simulations 100 --output ./dataset_v2
 
@@ -108,6 +119,17 @@ python train_v2.py --ckpt ./checkpoints_v3 --epochs 120
 # Step 3: 推論 → Viewer JSON出力
 python infer_v2.py --checkpoint ./checkpoints_v3/best.pt --frames 120
 ```
+
+## テスト
+
+```bash
+# FluidKit/ ディレクトリで実行
+pip install numpy scipy pytest
+pytest tests/ -v
+```
+
+運動量保存・境界貫通なし・再現性ハッシュ一致・JSON/NPZ ラウンドトリップを検証する
+22 テストが含まれる（`.github/workflows/test.yml` で push / PR ごとに自動実行）。
 
 ## Neural Fluid モデル比較
 

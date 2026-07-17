@@ -4,6 +4,34 @@
 
 対応する計画: `IMPROVEMENT_PLAN.md`（Phase 1, 2, 3, 4, 5, 6 実施）
 
+## サマリ
+
+```mermaid
+flowchart LR
+    subgraph Phase1["Phase 1: gen_sample.py"]
+        direction TB
+        A1["旧: 9.6s / 10frame"] -.->|5.6x| A2["新: 1.72s / 10frame"]
+    end
+    subgraph Phase2["Phase 2: KNN事前計算"]
+        direction TB
+        B1["旧: 31.46ms/forward"] -.->|1.97x| B2["新: 15.99ms/forward"]
+    end
+    subgraph Phase4["Phase 4: I/O"]
+        direction TB
+        C1["JSON 1285KB"] -.->|-66%| C2["gzip 430KB"]
+        C3["ckpt 4.55MB"] -.->|-50%| C4["fp16 2.29MB"]
+    end
+    subgraph Phase3["Phase 3: CG法(不採用)"]
+        direction TB
+        D1["旧 GS 7.9ms"] -.->|0.02x 悪化| D2["CG 508ms"]
+    end
+
+    style Phase1 fill:#2d5a3d,color:#fff
+    style Phase2 fill:#2d5a3d,color:#fff
+    style Phase4 fill:#2d5a3d,color:#fff
+    style Phase3 fill:#7a4a2d,color:#fff
+```
+
 ---
 
 ## Phase 1: gen_sample.py の solver 再利用化

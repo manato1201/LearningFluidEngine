@@ -217,6 +217,15 @@ section { scroll-margin-top: 24px; }
     <a href="#solver-flip-opt">FLIP ベクトル化</a>
     <a href="#solver-sandbox-lec">Judge0 パターン転用</a>
 
+    <div class="section-title">リファクタリング事例 (NEW)</div>
+    <a href="#refactor-setup">「最適化済み」だが未検証</a>
+    <a href="#refactor-bug">ブロードキャストの罠</a>
+    <a href="#refactor-fix">修正と検証</a>
+    <a href="#refactor-result">実測 vs 計画（5.6x）</a>
+    <a href="#refactor-cg">負の結果 — CG法</a>
+    <a href="#refactor-tests">安全網 — 物性テスト</a>
+    <a href="#refactor-lessons">3つの教訓</a>
+
     <div class="section-title">CI / CD (NEW)</div>
     <a href="#cicd-workflow">WASM 自動ビルド</a>
     <a href="#cicd-download">Releases 自動取得</a>
@@ -1719,6 +1728,274 @@ def timeout(seconds):
         timer.start()
         yield
         timer.cancel()</code></pre>
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     REFACTORING CASE STUDY
+═══════════════════════════════════════════════════════════ -->
+<section id="refactor-setup">
+<h2>実践ケーススタディ — 「最適化済み」コードを安全にリファクタリングする</h2>
+
+<p class="lead">
+ここまでの <code>solver/</code> パッケージは「最大 80 倍高速化」を達成した最適化済みコードとして紹介してきました。
+しかし実際のプロジェクトでは、<strong>最適化されたコードが一度も実行されていなかった</strong>という状況が起こり得ます。
+このセクションは IMPROVEMENT_PLAN.md に基づいて実施したリファクタリングの実録で、
+「数値計算コードを安全に書き換える」ための一般的な教訓を、実際に踏んだ失敗と成功の両方から学びます。
+</p>
+
+<h3>セットアップ — 最適化されていたが、誰も呼んでいなかった</h3>
+
+<p>プロジェクトには 2 つの SPH 実装が並存していました：</p>
+
+<table>
+  <tr><th>実装</th><th>場所</th><th>状態</th></tr>
+  <tr><td><code>SimpleSPH</code></td><td><code>tools/gen_sample.py</code></td><td>純 Python O(N²) 二重ループ。デモデータ生成に<strong>実際に使われていた</strong></td></tr>
+  <tr><td><code>SPHSolver</code></td><td><code>solver/sph_solver.py</code></td><td>空間ハッシュ + numpy ベクトル化。docstring に「N=500 で 47 倍高速化を実測」と記載。<strong>だがコードベース全体を検索しても呼び出し元がゼロ</strong></td></tr>
+</table>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ 「実測済み」という docstring は実行された証拠にならない</div>
+  <code>SPHSolver</code> の docstring には具体的な倍率まで書かれていましたが、
+  <code>grep -rn "SPHSolver" FluidKit/</code> で調べると <code>sph_solver.py</code> 自身の外に呼び出し元が存在しませんでした。
+  つまりこの「47倍高速化」は<strong>一度もエンドツーエンドで実行されないまま計画書に転記された数値</strong>だった可能性が高いということです。
+  「最適化されているが誰にも呼ばれていないコード」は、まさにバグが潜む場所です — テストも実運用も通っていないからです。
+</div>
+
+<p>Phase 1 の計画は単純でした：<code>gen_sample.py</code> の <code>SimpleSPH</code> を削除し、
+<code>SPHSolver</code> に置き換える。プリセット定義（初期配置・重力・境界）は <code>gen_sample.py</code> 側に残し、
+ステップ実行だけを委譲する構成です。</p>
+</section>
+
+<section id="refactor-bug">
+<h3>バグ発見 — numpy ブロードキャストの罠</h3>
+
+<p><code>gen_sample.py</code> を書き換えて実行した瞬間、<code>SPHSolver</code> は 2 個以上の近傍を持つ粒子が
+1 つでもあれば必ずクラッシュしました：</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Traceback</span><span>python -m tools.gen_sample --preset water_drop</span></div>
+  <pre><code class="language-plaintext">Traceback (most recent call last):
+  File "FluidKit/tools/gen_sample.py", line 187, in generate
+    solver.step(particles, dt)
+  File "FluidKit/solver/sph_solver.py", line 149, in step
+    acc = self._compute_forces(pos, vel, mass, rho, prs)
+  File "FluidKit/solver/sph_solver.py", line 200, in _compute_forces
+    prs_force = -(
+                 ^
+ValueError: operands could not be broadcast together with shapes (195,195) (195,3) </code></pre>
+</div>
+
+<p>これは<strong>「一度も実行されなかったコード」が抱えていた既存バグ</strong>で、gen_sample.py 側の変更が原因ではありません。
+原因は <code>_compute_forces</code> 内の 1 行に集約されます：</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python（旧・バグ）</span><span>solver/sph_solver.py — 修正前</span></div>
+  <pre><code class="language-python">prs_force = -(
+    mass[nbrs_arr] * prs_avg / rho[nbrs_arr, None]
+    * self._W_spiky_grad(r_vecs, rs)
+).sum(axis=0)</code></pre>
+</div>
+
+<p><code>rho[nbrs_arr, None]</code> という書き方が罠でした。<code>k</code> 個の近傍に対して、
+本来やりたかったのは「<code>(k,)</code> 形状の係数を計算してから <code>(k, dim)</code> の勾配配列と要素ごとに掛ける」ことです。
+ところが式の<strong>途中</strong>で <code>None</code>（<code>np.newaxis</code>）を挟んでしまったため、
+除算の時点でまだ意図しない形状変換が起きます：</p>
+
+<div class="diagram-box">
+<pre>
+mass[nbrs_arr] * prs_avg            → shape (k,)          ← ここまでは正しい
+                / rho[nbrs_arr, None]  → shape (k, 1)      ← rho 側だけ2次元化
+
+numpy がこの2つを割り算するとき、次元数を揃えるため
+形状の低い方 (k,) は左側に 1 を補って (1, k) として扱われる：
+
+    (1, k)  ÷  (k, 1)
+     │            │
+     └─ どちらの軸も「1」ではない側同士なのでブロードキャスト条件を満たしてしまう
+
+  結果: (k, k) の行列 ← 意図した (k,) ではなく巨大な正方行列！
+        （エラーにならず"静かに"間違った形状で計算が進む）
+
+その (k,k) 行列を _W_spiky_grad(r_vecs, rs) の (k, dim) と掛け合わせようとして
+初めて次元が噛み合わず ValueError（k=195, dim=3 の場合に上のトレースバックが出る）
+</pre>
+</div>
+
+<div class="callout callout-error">
+  <div class="callout-title">🐛 このバグが教えてくれる numpy の一般則</div>
+  <code>None</code>／<code>np.newaxis</code> は「今どういう形状にしたいか」を式の<strong>最後</strong>で明示するために使うべきで、
+  計算チェーンの<strong>途中</strong>に挟むと、周囲の項が意図しない形でブロードキャストされてしまうことがあります。
+  しかも今回のように両辺の次元数がたまたま噛み合うと <strong>エラーにならず黙って間違った形状の計算が進む</strong>ため、
+  発見が非常に遅れます（今回は N が小さい N=1 粒子デモではたまたま近傍が0〜1個で分岐をすり抜け、
+  複数近傍が発生する規模で初めて露見しました）。
+</div>
+</section>
+
+<section id="refactor-fix">
+<h3>修正 — 係数を先に <code>(k,)</code> で確定してから reshape する</h3>
+
+<p>修正方針はシンプルです：<strong>スカラー係数の計算を完結させてから</strong>、最後に <code>[:, None]</code> で
+明示的に列ベクトル化して <code>(k, dim)</code> 配列と掛けます。同じパターンの粘性力側も合わせて直しました：</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python（新・修正後）</span><span>solver/sph_solver.py — commit 15c86ca</span></div>
+  <pre><code class="language-python"># 圧力力: -∇p
+prs_avg   = (prs[i] + prs[nbrs_arr]) / 2.0
+prs_coeff = mass[nbrs_arr] * prs_avg / rho[nbrs_arr]        # (k,)  ← まず素直な1次元
+prs_force = -(
+    prs_coeff[:, None] * self._W_spiky_grad(r_vecs, rs)      # (k,1) * (k,dim) → (k,dim)
+).sum(axis=0)
+
+# 粘性力: μ ∇²u
+dv         = vel[nbrs_arr] - vel[i]
+visc_w     = self._W_visc_lap(rs)
+visc_coeff = mass[nbrs_arr] * visc_w / rho[nbrs_arr]         # (k,)  ← 同じパターン
+visc_force = self.mu * (visc_coeff[:, None] * dv).sum(axis=0) / rho[i]</code></pre>
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✅ 検証の手順（数値計算コードでは「動いた」だけでは不十分）</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li>まず<strong>最小再現スクリプト</strong>でクラッシュを単独再現（近傍2個以上の粒子を手動で作り、修正前のコードで同じ ValueError が出ることを確認）</li>
+    <li>修正を当てて、クラッシュしないこと・全出力が有限（NaN/Inf なし）であることを確認</li>
+    <li><strong>物理的妥当性</strong>を最小構成で検証：近傍粒子ゼロの孤立粒子を重力のみで dt=0.1 落下させると
+      <code>vel = [0, -0.98]</code>（<code>-9.8 × 0.1</code>）に厳密一致 — 圧力・粘性項が正しくゼロになっていることの確認</li>
+    <li>2D・3D の両方で同じ確認を実施</li>
+  </ol>
+</div>
+</section>
+
+<section id="refactor-result">
+<h3>結果 — 実測は「計画通り」ではなかった</h3>
+
+<p>修正した <code>SPHSolver</code> を <code>gen_sample.py</code> に統合した結果：</p>
+
+<table>
+  <tr><th>項目</th><th>旧（純 Python <code>SimpleSPH</code>）</th><th>新（修正済み <code>SPHSolver</code>）</th><th>倍率</th></tr>
+  <tr><td>water_drop（N=1500, 10 frames）</td><td>9.6 s</td><td>1.72 s</td><td class="hl-green">5.6x</td></tr>
+</table>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ 計画は「約100倍」を見込んでいたが、実測は 5.6 倍だった</div>
+  <code>IMPROVEMENT_PLAN.md</code>（Phase 1）は docstring に書かれていた「N=500 で47倍」を根拠に
+  「効果最大: 約100倍」と見積もっていました。しかし実測した結果は 5.6 倍にとどまりました。
+  <br><br>
+  理由を <code>_compute_density</code> / <code>_compute_forces</code> の実装を見て確認すると分かります：
+  空間ハッシュで近傍探索自体は <code>O(N²)→O(N)</code> に削減されているものの、
+  各粒子に対する密度・力の集計はいまだに <strong>粒子ごとの Python <code>for</code> ループの中で numpy 呼び出しを行うハイブリッド構造</strong>
+  （<code>solver-sph-opt</code> セクションの <code>SpatialHash.query()</code> がまさにこの形）であり、
+  「近傍探索を含む処理全体の完全ベクトル化」ではないからです。
+  <strong>ドキュメントに書かれた目標値は、実際に計測される前に書かれた見積もりに過ぎなかった</strong>ということです。
+</div>
+
+<p>参考までに、修正後の実装だけで計測した本番規模（120 frames）の所要時間：</p>
+
+<table>
+  <tr><th>preset</th><th>N</th><th>120 frames 所要時間</th></tr>
+  <tr><td>water_drop</td><td>1500</td><td>25.84 s</td></tr>
+  <tr><td>smoke</td><td>1200</td><td>10.18 s</td></tr>
+  <tr><td>splash</td><td>2000</td><td>26.89 s</td></tr>
+</table>
+
+<p>JSON 出力スキーマ（<code>metadata</code> / <code>frames</code> / <code>speeds</code>）は変更前と構造的に同一であることも確認済みです —
+viewer 側の互換性を壊さないことは、この種のリファクタリングでは速度と同じくらい重要な検証項目です。</p>
+</section>
+
+<section id="refactor-cg">
+<h3>負の結果 — 疎行列 CG 法が「理論上は正しいのに」遅かった話</h3>
+
+<p><code>stable_fluids.py</code> と <code>flip_solver.py</code> の圧力投影（Poisson 方程式）は
+固定 20 回反復の Gauss-Seidel/Jacobi 法で解いていました。
+「反復回数が固定＝収束を保証していない」ことに着目し、<code>scipy.sparse.linalg.cg</code>
+（共役勾配法）に置き換える改善を計画しました。CG は理論上、対称正定値行列に対して
+Gauss-Seidel より少ない反復で収束するはずです。</p>
+
+<h4>正しさの検証（ここまでは成功）</h4>
+<p>5点ステンシルの疎行列を <code>scipy.sparse.diags</code> で構築し、境界条件（Neumann コピー境界）の
+導出を慎重に行いました。検証の結果：</p>
+
+<div class="card-grid">
+  <div class="card"><h4>長時間参照解との一致</h4><p>3000回 Gauss-Seidel を回した参照解と <strong>1e-12 オーダー</strong>で一致</p></div>
+  <div class="card"><h4>発散量</h4><p>投影後の速度場の divergence 最大値が旧実装と同等かそれ以上に小さい</p></div>
+</div>
+
+<p>つまり<strong>数式の導出そのものは正しい</strong>ことを確認できました。</p>
+
+<h4>しかし実測ベンチマークで大幅に遅かった</h4>
+
+<table>
+  <tr><th>グリッド規模</th><th>旧（Gauss-Seidel）</th><th>新（scipy.sparse CG）</th><th>結果</th></tr>
+  <tr><td>N=64</td><td>2.6 ms</td><td>14.8 ms</td><td class="hl-red">約 5.7x 悪化</td></tr>
+  <tr><td>N=128</td><td>7.9 ms</td><td>508 ms</td><td class="hl-red">約 64x 悪化</td></tr>
+</table>
+
+<div class="callout callout-error">
+  <div class="callout-title">🐛 おまけの落とし穴：warm-start と純 Neumann 境界の相性</div>
+  さらに、純 Neumann 境界条件のため係数行列が特異（ヌル空間 = 定数ベクトル）でした。
+  反復の初期値に前ステップの解を使う「warm-start」を組み合わせると、丸め誤差がヌル空間方向に蓄積し
+  数十ステップで解が発散するという別の不具合も見つかりました
+  （warm-start をやめ、右辺からヌル空間成分を <code>b -= b.mean()</code> で除去することで数値的には安定）。
+  「理論的に正しい」ことと「実運用で安定する」ことの間にも、もう一段のギャップがあることが分かります。
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ 「漸近的に優れたアルゴリズム」≠「実際に速い」</div>
+  CG 法は反復回数の観点では Gauss-Seidel より効率的なはずです。しかし
+  <code>scipy.sparse.linalg.cg</code> は呼び出しごとに疎行列の構築・Python/C 境界のオーバーヘッド・
+  収束判定などの<strong>定数コスト</strong>を伴います。今回のグリッド規模（N=64〜128、格子点数 4,096〜16,384）は
+  疎行列 CG がこの定数コストを償却できるほど大きくありませんでした。
+  計算量オーダー（Big-O）の議論は「N が十分大きいとき」の話であり、実運用の N でそれが成立するとは限りません。
+  <br><br>
+  この結果は <code>IMPROVEMENT_PLAN.md</code> 自身が明記していた退避条件
+  「数値的に不安定なら本項は見送り可」を「性能目標（2〜5倍高速化）を満たせない場合も同様に見送る」
+  へと拡張適用し、<strong>両方の変更を差し戻しました</strong>。検証で分かったことはコード内コメントとして記録し、
+  次に同じアイデアを試みる人が同じ回り道をしないようにしています。
+</div>
+</section>
+
+<section id="refactor-tests">
+<h3>安全網 — 「物理的に正しい」をどうテストするか</h3>
+
+<p>この一連のリファクタリングを自信を持って進められた背景には、<code>FluidKit/tests/</code> に新設した
+pytest スイート（22 テスト、全パス）があります。数値計算コードのテストは
+「入力 A に対して出力は厳密に B」という<strong>普通の単体テストの発想が通用しません</strong> —
+リファクタリングの目的そのものが実装（＝厳密な出力値）を変えることだからです。
+代わりに<strong>物理的に成り立つべき不変量（invariant）</strong>を検証します：</p>
+
+<table>
+  <tr><th>カテゴリ</th><th>検証内容</th><th>対象</th></tr>
+  <tr><td>運動量保存</td><td>外力がなければ全粒子の運動量総和は不変。重力ありなら既知の力積分だけ変化する</td><td>SPHSolver</td></tr>
+  <tr><td>境界貫通なし</td><td>反射境界の外側に粒子・格子速度が漏れ出ないこと</td><td>SPHSolver / StableFluids2D / FLIPSolver</td></tr>
+  <tr><td>NaN・発散なし</td><td>多ステップ実行後も密度・速度が有限かつ妥当な範囲に収まること</td><td>全ソルバー</td></tr>
+  <tr><td>再現性ハッシュ</td><td>同一シード・同一設定なら SHA-256 状態ハッシュが一致、異なるシードなら不一致</td><td><code>reproducibility.py</code></td></tr>
+  <tr><td>I/O ラウンドトリップ</td><td>JSON（非圧縮/gzip）・NPZ を書き出して読み戻すと値が完全一致</td><td>gen_sample.py / reproducibility.py</td></tr>
+</table>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✅ なぜこの粒度のテストが「リファクタリングの安全網」になるか</div>
+  <code>_compute_forces</code> の内部実装（ループの回し方・ベクトル化の仕方）がどれだけ変わっても、
+  「運動量は保存される」「境界を突き抜けない」「NaN にならない」という物理法則は変わりません。
+  この不変量テストがあったからこそ、Phase 1 のバグ修正と Phase 3 の CG 実験（差し戻したものも含めて）を
+  <strong>安心して実際にコードを書き換えて試す</strong>ことができました。
+  数値がどこまで一致すべきかを判断できない場面でも、「壊れていないことの検証方法」は必ず設計できます。
+</div>
+</section>
+
+<section id="refactor-lessons">
+<h3>この事例から持ち帰れる3つの教訓</h3>
+
+<div class="callout callout-tip">
+  <div class="callout-title">📚 数値計算コードを安全にリファクタリングするための鉄則</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li><strong>「docstring に書かれたベンチマーク数値」はコードが実際に実行された証拠にはならない</strong> —
+      呼び出し元がゼロのコードパスこそ、最もバグが潜みやすい場所である</li>
+    <li><strong>計画書の目標値より、自分で測った実測値を信じる</strong> — 「100倍」という見積もりは
+      誰も実行したことのないコードの docstring から転記されたものだった。実測 5.6 倍が「正しい答え」</li>
+    <li><strong>「アルゴリズム的に優れている」と「実際に速い」は別問題</strong> — CG法は理論上正しく、収束性にも優れるが、
+      対象の問題規模（N=64〜128）では疎行列構築とドライバのオーバーヘッドが支配的だった。
+      「より洗練された手法」に飛びつく前に、必ず対象の規模で計測する</li>
+  </ol>
 </div>
 </section>
 

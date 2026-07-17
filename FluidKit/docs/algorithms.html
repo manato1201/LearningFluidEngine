@@ -259,11 +259,13 @@
     <li><a href="#navier" class="sub">Navier-Stokes 粒子版</a></li>
     <li><a href="#integration" class="sub">時間積分</a></li>
     <li><a href="#presets" class="sub">プリセット設定</a></li>
+    <li><a href="#sph-bug" class="sub">実装ノート: バグ発見 (2026-07)</a></li>
 
     <li class="cat">fluid-engine-dev</li>
     <li><a href="#pcisph">PCISPH</a></li>
     <li><a href="#flip">FLIP / PIC</a></li>
     <li><a href="#mgpcg">圧力ソルバー MGPCG</a></li>
+    <li><a href="#cg-experiment" class="sub">実装ノート: CG法実験 (2026-07)</a></li>
     <li><a href="#levelset">Level Set 法</a></li>
     <li><a href="#semilag">セミラグランジュ移流</a></li>
 
@@ -493,6 +495,59 @@ pos[i] += vel[i] * dt   <span class="cm"># ② 更新後の速度で位置を移
     </div>
   </section>
 
+  <!-- SPH BUG NOTE -->
+  <section id="sph-bug">
+    <h3>実装ノート — <code>SPHSolver</code> 統合で発覚したバグ（2026-07）</h3>
+    <p>
+      上記の密度・圧力・粘性の式を、全ペア探索ではなく空間ハッシュ（セルサイズ = カーネル半径 $h$）で
+      近傍を $O(N)$ に絞り込んだ上で numpy ベクトル化した実装が <code>solver/sph_solver.py</code> の
+      <code>SPHSolver</code> クラスである。ただしこのクラスは<strong>これまでどのパイプラインからも
+      呼び出されたことがなく</strong>、ドキュメントに記載されていた「47倍高速化」という数値は、
+      一度も end-to-end で実行検証されていなかった。
+    </p>
+    <p>
+      <code>tools/gen_sample.py</code> の <code>SimpleSPH</code>（純 Python 二重ループ）を
+      <code>SPHSolver</code> に置き換える作業の中で、近傍粒子が 2 個以上になるステップで必ず
+      例外が発生することが判明した。
+    </p>
+    <pre><code><span class="cm"># _compute_forces() 内 — バグのあった行（修正前）</span>
+prs_force = -(
+    mass[nbrs_arr] * prs_avg / rho[nbrs_arr, <span class="kw">None</span>]   <span class="cm"># (k,) / (k,1) のつもりが…</span>
+    * self._W_spiky_grad(r_vecs, rs)                <span class="cm"># grad: (k, dim)</span>
+).sum(axis=<span class="num">0</span>)
+<span class="lang">python</span></code></pre>
+    <p>
+      <code>mass[nbrs_arr] * prs_avg</code> は shape <code>(k,)</code>。一方
+      <code>rho[nbrs_arr, None]</code> は <code>rho[nbrs_arr]</code>（shape <code>(k,)</code>）に
+      <code>None</code> で軸を足したもので shape <code>(k, 1)</code> になる。ここで
+      <code>(k,)</code> と <code>(k, 1)</code> を割り算すると、numpy のブロードキャスト規則により
+      <code>(k,)</code> 側が暗黙に <code>(1, k)</code> として扱われ、結果は意図した <code>(k, 1)</code>
+      ではなく <strong><code>(k, k)</code> 行列</strong>になってしまう。この <code>(k,k)</code> 行列を
+      shape <code>(k, dim)</code> の勾配ベクトルに掛け合わせようとして shape 不一致で
+      <code>ValueError</code> となる（近傍数 <code>k</code> が 1 以下だと偶然 shape が壊れず素通りしていた）。
+    </p>
+    <pre><code><span class="cm"># 修正後</span>
+prs_coeff = mass[nbrs_arr] * prs_avg / rho[nbrs_arr]   <span class="cm"># (k,) — 先に係数として確定させる</span>
+prs_force = -(
+    prs_coeff[:, <span class="kw">None</span>] * self._W_spiky_grad(r_vecs, rs)   <span class="cm"># (k,1) * (k,dim) → (k,dim)</span>
+).sum(axis=<span class="num">0</span>)
+<span class="lang">python</span></code></pre>
+    <div class="box warn">
+      <strong>修正:</strong> 係数を先に <code>(k,)</code> の1次元配列として計算してから、
+      明示的に <code>[:, None]</code> で <code>(k, 1)</code> に reshape して勾配配列
+      <code>(k, dim)</code> にブロードキャストする形に変更（粘性力の計算も同様の構造だったため
+      同じパターンで修正）。独立した 2D/3D 再現テストと、修正前後で発散量・境界貫通の有無を
+      比較して検証した。
+    </div>
+    <p>
+      修正・統合後の実測（<code>water_drop</code>, N=1500, 10 フレーム）は
+      <strong>9.6 秒 → 1.72 秒（5.6 倍）</strong>。計画時点で期待した 100 倍には届かなかった —
+      空間ハッシュで近傍探索自体は $O(N)$ 化されているが、<code>_compute_density</code> /
+      <code>_compute_forces</code> は「粒子ごとの Python ループ + 近傍数分の numpy 演算」という
+      ハイブリッド構造であり、完全にはベクトル化されていないため。
+    </p>
+  </section>
+
   <hr />
 
   <!-- ══ FLUID-ENGINE-DEV ══ -->
@@ -563,6 +618,40 @@ pos[i] += vel[i] * dt   <span class="cm"># ② 更新後の速度で位置を移
       </div>
     </div>
     <div class="box info">MG 前処理により共役勾配法の収束が大幅に加速。計算量は $O(N \log N)$ 程度。大解像度格子でも実用的な速度で動作します。</div>
+  </section>
+
+  <!-- CG EXPERIMENT NOTE -->
+  <section id="cg-experiment">
+    <h3>実装ノート — 圧力投影のスパース CG 置換実験（不採用, 2026-07）</h3>
+    <p>
+      上記の MGPCG は多重格子前処理付き CG だが、本実装の <code>stable_fluids.py</code> /
+      <code>flip_solver.py</code> の圧力投影は、固定 20 回反復の Gauss-Seidel／Jacobi ループで
+      $\nabla^2 p = \frac{\rho}{\Delta t}\nabla \cdot \mathbf{u}$ を近似的に解いている。
+      より軽量な代替として、この固定反復ループを前処理なしの <code>scipy.sparse.linalg.cg</code>
+      に置き換える実験を両ファイルで実施した。
+    </p>
+    <p>
+      境界条件（Neumann-copy 境界 / Dirichlet 境界）の導出は数値的に正しいことを検証済み
+      （長時間 Gauss-Seidel 参照解と $10^{-12}$ オーダーで一致、投影後の発散量も旧実装と同等以上）。
+      しかし実際に使用しているグリッド規模（$N=64$〜$128$）では、疎行列の構築と CG ソルバー
+      呼び出しのオーバーヘッドが密配列スライス演算のコストを大きく上回り、
+      <strong>旧実装より最大 65 倍遅い</strong>という結果になった。
+    </p>
+    <div class="tbl">
+      <table>
+        <tr><th>ソルバー / グリッド</th><th>旧（Gauss-Seidel）</th><th>新（CG）</th><th>倍率</th></tr>
+        <tr><td>stable_fluids.py, N=64</td><td>2.6 ms</td><td>14.8 ms</td><td style="color:#f87171">0.18x</td></tr>
+        <tr><td>stable_fluids.py, N=128</td><td>7.9 ms</td><td>508 ms</td><td style="color:#f87171">0.02x</td></tr>
+        <tr><td>flip_solver.py, Nx=64</td><td>0.76 ms</td><td>4.80 ms</td><td style="color:#f87171">0.16x</td></tr>
+      </table>
+    </div>
+    <div class="box info">
+      <strong>判断:</strong> 計画書（<code>IMPROVEMENT_PLAN.md</code>）が定める退避条件
+      （「数値的に不安定なら本項は見送り可」）を「性能目標（2〜5倍高速化）を満たせない場合も同様」
+      として拡張適用し、両ファイルとも元の Gauss-Seidel／Jacobi 実装に差し戻した。
+      検証済みの境界条件導出とベンチマーク結果はソースコード内のコメントとして
+      <code>_project</code> / <code>_project_mac</code> に残してある。
+    </div>
   </section>
 
   <section id="levelset">
@@ -659,6 +748,19 @@ pos[i] += vel[i] * dt   <span class="cm"># ② 更新後の速度で位置を移
     <span class="kw">return</span> idx
 <span class="lang">python</span></code></pre>
     <div class="box tip">距離の 2 乗を使うため sqrt を省略。粒子位置が毎フレーム変化しても対応できる動的グラフ構築です。計算量は $O(N^2)$（粒子数 400 程度では十分高速）。</div>
+
+    <div class="box info">
+      <strong>実装ノート（Phase 2, 2026-07）:</strong> 上記の <code>knn_graph()</code> は forward の
+      たびに <code>(B,N,N,3)</code> の距離テンソルを生成するため、これを <code>scipy.spatial.cKDTree</code>
+      による近傍インデックスの事前計算に置き換えた。学習データは <code>collect_data.py</code> が
+      事前計算し、推論は <code>infer_v2.py</code> がロールアウトの各フレームで計算する
+      （推論時は次フレームの位置が未知のため事前計算できない）。<code>model_v2.py</code> の
+      <code>forward</code> / <code>predict_next</code> は近傍インデックス <code>nbr</code> を
+      任意引数として受け取り、<code>nbr=None</code> の場合のみ旧 <code>knn_graph()</code> に
+      フォールバックする形で後方互換を維持した。$N=400,\,k=16,\,B=8$ で forward
+      31.46ms→15.99ms（約2倍）、$N=4000$ で GPU メモリ 3450MB→2076MB（約1.66倍）削減。
+      旧 $O(N^2)$ 近傍集合との一致率 100%、モデル出力もビット一致を確認済み。
+    </div>
   </section>
 
   <section id="mp">
@@ -908,6 +1010,41 @@ nn.utils.<span class="fn">clip_grad_norm_</span>(model.parameters(), <span class
           <td>Z ソート不要で高速。密度可視化に直感的</td>
         </tr>
       </table>
+    </div>
+
+    <h3 style="margin-top:36px;">実装上の教訓（2026-07 リファクタリングセッション）</h3>
+    <p>
+      <code>IMPROVEMENT_PLAN.md</code> に基づき 6 フェーズの最適化・リファクタリングを実施した。
+      <a href="#sph-bug" style="color:var(--accent)">SPH 空間ハッシュ実装のバグ発見</a>と
+      <a href="#cg-experiment" style="color:var(--accent)">CG 法実験の不採用判断</a>（いずれも上記参照）に加え、
+      以下も実施している。
+    </p>
+    <div class="card-grid">
+      <div class="card">
+        <h4>Phase 4 — I/O・メモリ効率化</h4>
+        <p>JSON 出力に任意の <code>--gzip</code> フラグを追加（約66%削減）。チェックポイントを
+           fp32 に加え fp16 でも保存（約50%削減、<code>infer_v2.py</code> が直接読み込み可）。
+           データセット読み込みは <code>mmap_mode='r'</code> 化。</p>
+      </div>
+      <div class="card">
+        <h4>Phase 5 — 死コード削除・共通化</h4>
+        <p>参照の無い v1 Neural Fluid パイプライン（<code>train.py</code> / <code>infer_to_json.py</code> /
+           <code>model.py</code>）を grep で確認の上で削除。位置・速度正規化の重複ロジックを
+           新設の <code>FluidKit/utils.py</code> に集約。</p>
+      </div>
+      <div class="card">
+        <h4>Phase 6 — テストによる安全網</h4>
+        <p><code>FluidKit/tests/</code> に pytest スイート（22件、momentum保存・境界貫通なし・
+           再現性ハッシュ一致・JSON/NPZラウンドトリップ）を新設。上記の CG 法実験を安全に
+           試して差し戻す土台になった。<code>.github/workflows/test.yml</code> で push/PR
+           ごとに自動実行。</p>
+      </div>
+      <div class="card">
+        <h4>詳細な実測値</h4>
+        <p>全フェーズの計測条件・数値は
+           <a href="PERF_RESULTS.md" style="color:var(--accent)">docs/PERF_RESULTS.md</a>
+           にまとめてある（計測日 2026-07-04、RTX 3070 / Python 3.12 / torch 2.6.0+cu124 / scipy 1.18.0）。</p>
+      </div>
     </div>
   </section>
 

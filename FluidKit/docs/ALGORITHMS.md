@@ -10,6 +10,7 @@
 6. [CI/CD — WASM 自動ビルド & Releases](#6-cicd--wasm-自動ビルド--releases) ★NEW
 7. [アルゴリズム選定の理由](#7-アルゴリズム選定の理由)
 8. [パイプライン全体図](#8-パイプライン全体図)
+9. [最適化・リファクタリング実施記録 (IMPROVEMENT_PLAN.md)](#9-最適化リファクタリング実施記録) ★NEW
 
 ---
 
@@ -414,6 +415,13 @@ def _hash(self, cx: int, cy: int) -> int:
 新 (空間ハッシュ):  ~18  ms / step  → 47x 高速化
 ```
 
+> **リファクタ時の教訓（[§9](#9-最適化リファクタリング実施記録) 参照）**: `SPHSolver` は実装当初
+> どこからも呼ばれておらず、上記の47倍という数値は一度も end-to-end で検証されていなかった。
+> `gen_sample.py` から実際に呼び出すよう配線した際、`_compute_forces()` の
+> ブロードキャストバグ（近傍2粒子以上で必ずクラッシュ）が発覚し修正した。
+> 「最適化済み」と書かれたコードでも、呼び出し元が存在しない限り実際には検証されていない
+> ——というのが今回最大の学び。
+
 ### 5-3. FLIP ハイブリッド — `flip_solver.py`
 
 **P2G の numpy 化（`np.add.at` scatter）**:
@@ -520,7 +528,7 @@ python FluidKit/setup/download_build.py
 | 本格シミュ | PCISPH / FLIP | 計算効率と精度のバランスが良い |
 | 圧力ソルバー | MGPCG | 大解像度でも $O(N\log N)$ で収束 |
 | Neural Fluid | Interaction Network (GNN) | 粒子ベースデータへの最も自然な帰納バイアス |
-| KNN | $O(N^2)$ dense（学習時） | 粒子数 400 程度では十分高速 |
+| KNN | `scipy.spatial.cKDTree` 事前計算 | 学習データは静的なため forward 毎の $O(N^2)$ 計算が不要。推論はロールアウト中フレーム毎にCPU上で計算（N〜400なら十分高速） |
 | 最適化 | Adam + ReduceLROnPlateau | 安定した収束、手動チューニングが少ない |
 | レンダリング | Point Sprite + カスタムシェーダー | ジオメトリ不要、数万粒子でもリアルタイム描画 |
 
@@ -528,31 +536,135 @@ python FluidKit/setup/download_build.py
 
 ## 8. パイプライン全体図
 
+```mermaid
+flowchart TD
+    subgraph PHYS["物理シミュレーション"]
+        FED["fluid-engine-dev"]
+        FED --> SPHE["SPH / PCISPH"]
+        FED --> FLIPE["FLIP / PIC"]
+        FED --> LSE["Level Set<br/>(FMM + Semi-Lagrangian)"]
+        FED --> MGE["圧力ソルバー (MGPCG)"]
+    end
+
+    subgraph PYCONV["Python 変換層"]
+        X2J["xyz_to_json.py"]
+        GS["gen_sample.py<br/>(SimpleSPH → solver.SPHSolver に委譲)"]
+    end
+
+    SPHE -->|XYZ/OBJ 出力| X2J
+    FLIPE -->|XYZ/OBJ 出力| X2J
+    LSE -->|XYZ/OBJ 出力| X2J
+    MGE -->|XYZ/OBJ 出力| X2J
+
+    X2J --> FJ["frames.json"]
+    GS --> FJ
+
+    subgraph NEURAL["Neural Fluid 学習"]
+        CD["collect_data.py<br/>パラメータ多様化シミュ +<br/>cKDTree 近傍事前計算"]
+        MV2["model_v2.py (NeuralFluidV2)<br/>ParticleEncoder + GlobalContext<br/>KNNグラフ(事前計算) + Edge MLP<br/>Decoder → Δpos, Δvel"]
+        TV2["train_v2.py<br/>AdamW + AMP + CosineAnnealing"]
+        IV2["infer_v2.py"]
+        CD -->|".npy データセット<br/>(mmap 読み込み)"| MV2
+        MV2 --> TV2
+        TV2 -->|"チェックポイント<br/>(fp32 + fp16)"| IV2
+        IV2 --> FJN["frames.json"]
+    end
+
+    subgraph VIEWER["Three.js Viewer"]
+        IDX["index.html"]
+        PS["Point Sprite シェーダー"]
+        KG["KNN グラフ可視化"]
+        CM["カラーマッピング"]
+        AN["時間ベースアニメーション"]
+        IDX --- PS
+        IDX --- KG
+        IDX --- CM
+        IDX --- AN
+    end
+
+    FJ -->|"gzip 対応 (--gzip)"| VIEWER
+    FJN --> VIEWER
 ```
-【物理シミュレーション】
-fluid-engine-dev
-  ├─ SPH / PCISPH ─────────────────────────────────┐
-  ├─ FLIP / PIC                                     │ XYZ / OBJ
-  ├─ Level Set (FMM + Semi-Lagrangian)              │ 出力
-  └─ 圧力ソルバー (MGPCG)                            │
-                                                    ▼
-【Python 変換層】                          xyz_to_json.py
-gen_sample.py (SimpleSPH)          ──────────────────────►
-  ├─ Poly6 カーネル                                  │
-  ├─ Symplectic Euler 積分                           │ frames.json
-  └─ AABB 境界反射                                   │
-                                                    ▼
-【Neural Fluid 学習】                    【Three.js Viewer】
-collect_data.py                         index.html
-  ├─ パラメータ多様化シミュ                 ├─ Point Sprite シェーダー
-  └─ cKDTree で近傍を事前計算            ├─ KNN グラフ可視化
-        ↓ .npy データセット               ├─ カラーマッピング
-model_v2.py (NeuralFluidV2)             └─ 時間ベースアニメーション
-  ├─ ParticleEncoder + GlobalContext
-  ├─ KNN グラフ(事前計算) + Edge MLP
-  └─ Decoder (MLP → Δpos, Δvel)
-        ↓
-train_v2.py (AdamW + AMP + CosineAnnealing → 訓練)
-        ↓
-infer_v2.py ──────────────────────► frames.json
+
+---
+
+## 9. 最適化・リファクタリング実施記録
+
+`IMPROVEMENT_PLAN.md`（2026-07-03 作成）に基づき実施した6フェーズの記録。
+実測値の詳細は [`docs/PERF_RESULTS.md`](PERF_RESULTS.md) を参照。
+
+```mermaid
+flowchart LR
+    P1["Phase 1<br/>gen_sample.py の<br/>solver 再利用化"]
+    P2["Phase 2<br/>Neural Fluid KNN<br/>cKDTree 事前計算"]
+    P4["Phase 4<br/>I/O・メモリ効率化<br/>(gzip / mmap / fp16)"]
+    P5["Phase 5<br/>リファクタリング<br/>(v1削除・utils.py集約)"]
+    P6["Phase 6<br/>テストスイート追加<br/>(pytest 22件 + CI)"]
+    P3["Phase 3<br/>ソルバー微修正<br/>+ CG法(検証のみ)"]
+
+    P1 --> P2 --> P4 --> P5 --> P6 --> P3
+
+    style P1 fill:#4a7c59,color:#fff
+    style P2 fill:#4a7c59,color:#fff
+    style P4 fill:#4a7c59,color:#fff
+    style P5 fill:#4a7c59,color:#fff
+    style P6 fill:#4a7c59,color:#fff
+    style P3 fill:#b08d3e,color:#fff
+```
+
+緑 = 採用・コミット済み。橙 = 一部のみ採用（近傍マスクのnumpy化は採用、CG法は性能検証の結果差し戻し）。
+
+### 9-1. Phase 1 実施中に発覚したバグ
+
+`gen_sample.py` を `solver/sph_solver.py` の `SPHSolver` に接続した際、`_compute_forces()` が
+近傍2粒子以上で必ず `ValueError` を送出することが判明した。`SPHSolver` はこれまでどこからも
+呼び出されておらず、README等に記載の「47倍高速化」はコード上の期待値であって、一度も
+end-to-end で実行検証されていなかった。
+
+```mermaid
+sequenceDiagram
+    participant G as gen_sample.py
+    participant S as SPHSolver._compute_forces
+    G->>S: step(particles, dt)
+    S->>S: prs_coeff = mass[nbrs] * prs_avg / rho[nbrs, None]
+    Note over S: (k,) を (k,1) で割ると<br/>ブロードキャストで (k,k) 行列になる
+    S--xG: ValueError: (k,k) と (k,dim) の shape 不一致
+```
+
+**修正**: `rho[nbrs_arr, None]` による誤ったブロードキャストを、`(k,)` の係数を明示的に
+`[:, None]` で reshape してから `(k,dim)` 配列に掛ける形に変更（`prs_coeff[:, None] * grad`）。
+独立した2D/3D再現テストと、修正前後で発散量・境界貫通の有無を比較して検証した。
+
+### 9-2. Phase 3 — CG法を採用しなかった理由
+
+圧力投影の固定20回反復（Gauss-Seidel／Jacobi）を `scipy.sparse.linalg.cg` に置換する実験を
+`stable_fluids.py` / `flip_solver.py` の両方で実施した。境界条件の導出（Neumann-copy境界 /
+Dirichlet境界）は数値的に正しいことを検証済み（長時間GS参照解と `1e-12` オーダーで一致）だが、
+この規模のグリッド（N=64〜128）では疎行列CGの呼び出しオーバーヘッドが密配列スライス演算を
+上回り、**旧実装より最大65倍遅い**という結果になった。
+
+| グリッド | 旧 (Gauss-Seidel) | 新 (CG) | 倍率 |
+|---|---|---|---|
+| stable_fluids N=64 | 2.6 ms | 14.8 ms | 0.18x |
+| stable_fluids N=128 | 7.9 ms | 508 ms | 0.02x |
+| flip Nx=64 | 0.76 ms | 4.80 ms | 0.16x |
+
+計画書自身が定める退避条件（「数値的に不安定なら見送り可」）を、「性能目標未達の場合も同様」
+として拡張適用し、両ファイルとも元の実装を維持。検証結果はソースコード内コメントとして
+`_project` / `_project_mac` に記録した。
+
+### 9-3. テストによる安全網
+
+Phase 6 で追加した `FluidKit/tests/`（pytest, 22件）が Phase 3 の実験・差し戻し判断を
+安全に行うための土台になった。
+
+```mermaid
+flowchart TD
+    A["ソルバー変更を実施"] --> B{"pytest FluidKit/tests/ -v"}
+    B -->|"momentum保存 / 境界貫通なし /<br/>再現性ハッシュ一致 / I/Oラウンドトリップ"| C{"全22件パス?"}
+    C -->|Yes| D["性能を比較"]
+    C -->|No| E["変更を差し戻し"]
+    D --> F{"旧実装より速い?"}
+    F -->|Yes| G["採用・コミット"]
+    F -->|No| E
 ```

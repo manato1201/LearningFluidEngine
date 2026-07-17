@@ -260,6 +260,9 @@
     <li><a href="#solver-flip">FLIP ハイブリッド</a></li>
     <li><a href="#solver-sandbox">サンドボックス実行</a></li>
 
+    <li class="section-title">最適化ログ (2026-07)</li>
+    <li><a href="#optlog">Phase 1〜6 実施記録</a></li>
+
     <li class="section-title">CI / CD</li>
     <li><a href="#cicd">WASM 自動ビルド & Releases</a></li>
 
@@ -632,7 +635,9 @@ this._accTime += dt * playbackSpeed;
         <p>
           StableFluids2D: <strong style="color:#38d9c0">60〜80x</strong><br>
           SPHSolver (N=500): <strong style="color:#38d9c0">47x</strong><br>
-          FLIPSolver (N=1000): <strong style="color:#38d9c0">47x</strong>
+          FLIPSolver (N=1000): <strong style="color:#38d9c0">47x</strong><br>
+          <small style="color:var(--muted)">※ 上記はソルバー単体の isolated benchmark。gen_sample.py
+          経由の実測（water_drop 全パイプライン）は <a href="#optlog" style="color:#38d9c0">5.6x</a> — 詳細は下記参照</small>
         </p>
       </div>
       <div class="algo-card">
@@ -754,6 +759,76 @@ result = <span class="fn">run_simulation_sandboxed</span>(
     </div>
   </section>
 
+  <!-- OPTIMIZATION LOG -->
+  <section id="optlog">
+    <h2>最適化・リファクタリング実施記録（2026-07, Phase 1〜6）</h2>
+    <p>
+      <code>IMPROVEMENT_PLAN.md</code> に基づき実施した6フェーズの要約。詳細な計測条件・数値は
+      <a href="PERF_RESULTS.md" style="color:var(--accent2)">docs/PERF_RESULTS.md</a>、
+      バグ発見の経緯や CG 法を不採用にした技術的な理由は
+      <a href="algorithms.html#sph-bug" style="color:var(--accent2)">アルゴリズム詳細解説の「実装ノート」</a>
+      を参照してください。
+    </p>
+
+    <div class="result-grid">
+      <div class="result-card"><div class="val">5.6x</div><div class="lbl">gen_sample.py 実測高速化<br>(water_drop, N=1500)</div></div>
+      <div class="result-card"><div class="val">~2x</div><div class="lbl">Neural Fluid forward<br>(KNN 事前計算, N=400)</div></div>
+      <div class="result-card"><div class="val">-66% / -50%</div><div class="lbl">JSON gzip / fp16<br>チェックポイント削減</div></div>
+      <div class="result-card"><div class="val">22</div><div class="lbl">pytest テスト<br>(全パス, CI 自動実行)</div></div>
+    </div>
+
+    <div class="algo-grid">
+      <div class="algo-card">
+        <h4>Phase 1 — gen_sample.py の solver 再利用化</h4>
+        <p>純 Python 二重ループの <code>SimpleSPH</code> を <code>solver/sph_solver.py</code> の
+           <code>SPHSolver</code>（空間ハッシュ + numpy）に置換。統合作業中に <code>SPHSolver</code> の
+           未発見バグ（ブロードキャストミスで近傍2つ以上のステップが必ずクラッシュ）を発見・修正。
+           water_drop: 9.6s → 1.72s（<strong style="color:#38d9c0">5.6x</strong>）。</p>
+      </div>
+      <div class="algo-card">
+        <h4>Phase 2 — Neural Fluid KNN 事前計算</h4>
+        <p>毎 forward で <code>(B,N,N,3)</code> 距離テンソルを生成していた <code>knn_graph()</code> を、
+           <code>scipy.spatial.cKDTree</code> による近傍インデックス事前計算に変更
+           （学習: collect_data.py で事前計算 / 推論: infer_v2.py が毎フレーム計算）。
+           forward 31.46ms→15.99ms（<strong style="color:#38d9c0">約2x</strong>）、
+           GPUメモリ 3450MB→2076MB（約1.66x, N=4000）。</p>
+      </div>
+      <div class="algo-card">
+        <h4>Phase 4 — I/O・メモリ効率化</h4>
+        <p><code>gen_sample.py --gzip</code> で JSON 出力を任意圧縮（約
+           <strong style="color:#38d9c0">66%削減</strong>）。チェックポイントを fp32 に加え
+           fp16 でも保存（約<strong style="color:#38d9c0">50%削減</strong>、<code>infer_v2.py</code>
+           が直接読み込み可）。<code>train_v2.py</code> はデータセットを <code>mmap_mode='r'</code> で読み込み。</p>
+      </div>
+      <div class="algo-card">
+        <h4>Phase 5 — 死コード削除・共通化</h4>
+        <p>参照の無い v1 Neural Fluid パイプライン（<code>train.py</code> / <code>infer_to_json.py</code> /
+           <code>model.py</code>）を grep で無参照を確認の上で削除。位置・速度正規化の重複ロジック
+           （<code>collect_data.py</code> / <code>infer_v2.py</code>）を新設の <code>utils.py</code> に集約。</p>
+      </div>
+      <div class="algo-card">
+        <h4>Phase 6 — テストスイート追加</h4>
+        <p><code>FluidKit/tests/</code> に pytest <strong style="color:#38d9c0">22件</strong>
+           （momentum保存・境界貫通なし・再現性ハッシュ一致・JSON/NPZラウンドトリップ）を新設。
+           <code>.github/workflows/test.yml</code> で push/PR ごとに自動実行（release.yml とは別ワークフロー）。</p>
+      </div>
+      <div class="algo-card">
+        <h4>Phase 3 — CG法実験（不採用）</h4>
+        <p>圧力投影の固定20回反復（Gauss-Seidel/Jacobi）を <code>scipy.sparse.linalg.cg</code> に
+           置換する実験。境界条件の導出は数値的に正しいと検証したが、実際のグリッド規模（N=64〜128）
+           では疎行列/CGの呼び出しオーバーヘッドが上回り<strong style="color:#f87171">最大65倍遅い</strong>
+           結果に。両ファイルとも元の実装に差し戻し、検証結果はコード内コメントとして記録。</p>
+      </div>
+    </div>
+
+    <div class="box info">
+      Phase 1 で見つかった <code>SPHSolver</code> のバグは、このクラスをこれまでどのパイプラインからも
+      呼び出していなかったために一度も end-to-end で実行検証されていなかったことが原因。
+      上の「📊 速度改善サマリ」や下の「ソルバー性能比較」表にある SPHSolver 47x はソルバー単体の
+      isolated benchmark であり、<code>gen_sample.py</code> 経由の実測（5.6x）とは測定条件が異なる点に注意。
+    </div>
+  </section>
+
   <!-- CI/CD -->
   <section id="cicd">
     <h2>CI/CD — WASM 自動ビルド & GitHub Releases</h2>
@@ -802,22 +877,25 @@ python FluidKit/setup/download_build.py --force</code></pre>
     <div class="tbl-wrap">
       <table>
         <tr><th>ファイル</th><th>役割</th><th>主要アルゴリズム</th></tr>
-        <tr><td><code>tools/gen_sample.py</code></td><td>Python SPH シミュレーター</td><td>Poly6 カーネル, Symplectic Euler</td></tr>
+        <tr><td><code>tools/gen_sample.py</code></td><td>Python SPH シミュレーター</td><td>solver/sph_solver.py の SPHSolver 呼び出し（Phase1で5.6x高速化）, --gzip 出力対応</td></tr>
         <tr><td><code>tools/xyz_to_json.py</code></td><td>XYZ/POS → JSON 変換</td><td>フォーマット自動検出, 境界ボックス計算</td></tr>
-        <tr><td><code>neural/model_v2.py</code></td><td>Neural Fluid v2/v3</td><td>GlobalContext, LayerNorm, k=16, AMP (1.13M)</td></tr>
-        <tr><td><code>neural/collect_data.py</code></td><td>学習データ一括収集</td><td>速度正規化 (vel_std), 多パラメータサンプリング</td></tr>
-        <tr><td><code>neural/train_v2.py</code></td><td>v2/v3 訓練</td><td>AdamW, CosineAnnealingLR, AMP GradScaler</td></tr>
-        <tr><td><code>neural/infer_v2.py</code></td><td>v2/v3 推論 → JSON</td><td>速度正規化対応, 自律ロールアウト</td></tr>
-        <tr><td><code>viewer/index.html</code></td><td>Three.js Viewer</td><td>Point Sprite シェーダー, 加算ブレンド</td></tr>
+        <tr><td><code>neural/model_v2.py</code></td><td>Neural Fluid v2/v3</td><td>GlobalContext, LayerNorm, k=16, AMP (1.13M), 近傍 nbr 事前計算対応</td></tr>
+        <tr><td><code>neural/collect_data.py</code></td><td>学習データ一括収集</td><td>速度正規化 (vel_std), 多パラメータサンプリング, cKDTree 近傍事前計算</td></tr>
+        <tr><td><code>neural/train_v2.py</code></td><td>v2/v3 訓練</td><td>AdamW, CosineAnnealingLR, AMP GradScaler, mmap_mode='r' 読み込み, fp16 チェックポイント保存</td></tr>
+        <tr><td><code>neural/infer_v2.py</code></td><td>v2/v3 推論 → JSON</td><td>速度正規化対応, 自律ロールアウト, フレームごと cKDTree 近傍計算</td></tr>
+        <tr><td><code>utils.py</code></td><td>正規化ロジック集約 (NEW)</td><td>位置・速度正規化を一元化（collect_data.py / infer_v2.py の重複解消）</td></tr>
+        <tr><td><code>viewer/index.html</code></td><td>Three.js Viewer</td><td>Point Sprite シェーダー, 加算ブレンド, .json.gz 読み込み対応</td></tr>
         <tr><td><code>wasm/sph_wasm.cpp</code></td><td>C++ SPH (WASM 用)</td><td>SoA レイアウト, MAX_N=4096, Emscripten</td></tr>
         <tr><td><code>wasm/serve.py</code></td><td>COOP/COEP HTTP サーバー</td><td>SharedArrayBuffer 対応, port 8765</td></tr>
-        <tr><td><code>solver/stable_fluids.py</code></td><td>格子ソルバー (NEW)</td><td>map_coordinates, 60〜80x 高速化</td></tr>
-        <tr><td><code>solver/sph_solver.py</code></td><td>SPH + 空間ハッシュ (NEW)</td><td>SpatialHash O(N), 47x 高速化</td></tr>
-        <tr><td><code>solver/flip_solver.py</code></td><td>FLIP ハイブリッド (NEW)</td><td>np.add.at scatter, 47x 高速化</td></tr>
-        <tr><td><code>solver/reproducibility.py</code></td><td>再現性保証 (NEW)</td><td>SHA-256 状態ハッシュ, NPZ 保存</td></tr>
-        <tr><td><code>solver/runner.py</code></td><td>サンドボックス実行 (NEW)</td><td>クロスプラットフォーム タイムアウト</td></tr>
-        <tr><td><code>setup/download_build.py</code></td><td>WASM 自動取得 (NEW)</td><td>GitHub Releases から urllib のみで取得</td></tr>
-        <tr><td><code>.github/workflows/release.yml</code></td><td>CI/CD (NEW)</td><td>Emscripten ビルド + Release 自動配布</td></tr>
+        <tr><td><code>solver/stable_fluids.py</code></td><td>格子ソルバー</td><td>map_coordinates, 60〜80x 高速化</td></tr>
+        <tr><td><code>solver/sph_solver.py</code></td><td>SPH + 空間ハッシュ</td><td>SpatialHash O(N), ブロードキャストバグ修正済み (2026-07), gen_sample.py から利用</td></tr>
+        <tr><td><code>solver/flip_solver.py</code></td><td>FLIP ハイブリッド</td><td>np.add.at scatter, 47x 高速化</td></tr>
+        <tr><td><code>solver/reproducibility.py</code></td><td>再現性保証</td><td>SHA-256 状態ハッシュ, NPZ 保存</td></tr>
+        <tr><td><code>solver/runner.py</code></td><td>サンドボックス実行</td><td>クロスプラットフォーム タイムアウト</td></tr>
+        <tr><td><code>tests/</code></td><td>pytest テストスイート (NEW)</td><td>momentum保存, 境界貫通なし, 再現性ハッシュ一致, I/Oラウンドトリップ (22件)</td></tr>
+        <tr><td><code>setup/download_build.py</code></td><td>WASM 自動取得</td><td>GitHub Releases から urllib のみで取得</td></tr>
+        <tr><td><code>.github/workflows/release.yml</code></td><td>CI/CD</td><td>Emscripten ビルド + Release 自動配布 (タグ push 時)</td></tr>
+        <tr><td><code>.github/workflows/test.yml</code></td><td>CI テスト自動実行 (NEW)</td><td>push/PR ごとに pytest 実行</td></tr>
       </table>
     </div>
   </section>
@@ -852,6 +930,11 @@ python FluidKit/setup/download_build.py --force</code></pre>
         <tr><td>FLIPSolver</td><td>N=1000, 64×64</td><td>~420 ms</td><td>~9 ms</td><td style="color:#34d399">47x</td></tr>
       </table>
     </div>
+    <p style="font-size:12px;color:var(--muted);margin-top:6px;">
+      ※ SPHSolver の 47x はソルバー単体の isolated benchmark。<code>gen_sample.py</code> 経由の
+      end-to-end 実測（water_drop, N=1500, 10 frames）は 9.6s → 1.72s（<strong>5.6x</strong>）—
+      詳細は <a href="#optlog" style="color:var(--accent2)">最適化ログ</a> を参照。
+    </p>
   </section>
 
   <!-- NEXT -->

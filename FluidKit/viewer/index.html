@@ -5,651 +5,882 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FluidKit Viewer</title>
   <style>
+    /* 決めごと(IMPROVEMENT_DESIGN_2026-10.md §3): アイコンは線画SVG、数字は半角・等幅、
+       選択中だけ塗る、UI の動き(トランジション)は使わない。 */
+    :root {
+      --bg: #0a0a12; --panel: rgba(12,12,24,0.9); --line: rgba(80,140,255,0.25);
+      --text: #e0e0e0; --muted: #8da2c2; --accent: #5aa0ff; --on: rgba(60,160,255,0.45);
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0a0a12; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; font-size: 13px; overflow: hidden; }
+    .num { font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-variant-numeric: tabular-nums; }
 
-    /* ─── canvas ─── */
-    #canvas { display: block; width: 100vw; height: 100vh; }
+    #canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+    svg.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
-    /* ─── overlay panel ─── */
-    #panel {
-      position: fixed; top: 16px; left: 16px;
-      background: rgba(12,12,24,0.82);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(80,140,255,0.25);
-      border-radius: 12px;
-      padding: 16px 18px;
-      width: 260px;
-      user-select: none;
-      z-index: 10;
-    }
-    #panel h1 { font-size: 15px; color: #7ab4ff; letter-spacing: 1px; margin-bottom: 12px; }
+    /* ─── 共通部品 ─── */
+    button, select { font: inherit; color: #a8c8ff; background: rgba(60,90,160,0.35); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+    button:hover:not(:disabled), select:hover { background: rgba(80,120,220,0.55); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button:focus-visible, select:focus-visible, input:focus-visible, .tip:focus-visible { outline: 2px solid #9cc7ff; outline-offset: 2px; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; }
+    .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .seg button { border: 0; border-radius: 0; background: transparent; padding: 6px 12px; }
+    .seg button + button { border-left: 1px solid var(--line); }
+    .seg button[aria-pressed="true"], .chip[aria-pressed="true"] { background: var(--on); color: #fff; border-color: #60a0ff; }
 
-    .section { margin-bottom: 14px; }
-    .section label { font-size: 11px; color: #8090a8; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 5px; }
+    /* ツールチップ(キーボード操作でも出す) */
+    .field { position: relative; }
+    .tip { display: inline-flex; vertical-align: middle; margin-left: 4px; color: var(--muted); cursor: help; }
+    .tip svg.i { width: 13px; height: 13px; }
+    .tip::after { content: attr(data-tip); display: none; position: absolute; left: 0; right: 0; top: 24px; z-index: 30; padding: 7px 9px; font-size: 11px; line-height: 1.5; color: var(--text); background: #14182c; border: 1px solid var(--line); border-radius: 6px; }
+    .tip:hover::after, .tip:focus::after { display: block; }
+    [data-tip].has-tip { position: relative; }
+    [data-tip].has-tip:hover::after, [data-tip].has-tip:focus-visible::after { content: attr(data-tip); display: block; position: absolute; top: 100%; left: 0; z-index: 30; width: 200px; padding: 7px 9px; margin-top: 4px; font-size: 11px; line-height: 1.5; color: var(--text); background: #14182c; border: 1px solid var(--line); border-radius: 6px; text-align: left; }
 
-    /* buttons */
-    .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
-    button {
-      background: rgba(60,90,160,0.4); border: 1px solid rgba(80,140,255,0.3);
-      color: #a8c8ff; border-radius: 6px; padding: 5px 10px; font-size: 12px;
-      cursor: pointer; transition: background 0.15s;
-    }
-    button:hover { background: rgba(80,120,220,0.6); }
-    button.active { background: rgba(60,160,255,0.45); border-color: #60a0ff; color: #fff; }
+    /* トグルスイッチ */
+    .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+    .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+    .switch .track { width: 34px; height: 18px; border-radius: 9px; background: rgba(80,140,255,0.2); border: 1px solid var(--line); position: relative; flex: none; }
+    .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #a8c8ff; }
+    .switch input:checked + .track { background: var(--on); border-color: #60a0ff; }
+    .switch input:checked + .track::after { left: 18px; background: #fff; }
+    .switch input:focus-visible + .track { outline: 2px solid #9cc7ff; outline-offset: 2px; }
 
-    /* sliders */
-    input[type=range] {
-      -webkit-appearance: none; width: 100%; height: 4px;
-      background: rgba(80,140,255,0.25); border-radius: 2px; outline: none;
-    }
-    input[type=range]::-webkit-slider-thumb {
-      -webkit-appearance: none; width: 14px; height: 14px;
-      background: #5090ff; border-radius: 50%; cursor: pointer;
-    }
-    .slider-row { display: flex; align-items: center; gap: 8px; }
-    .slider-row span { font-size: 11px; color: #7090b8; min-width: 32px; text-align: right; }
+    input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; background: rgba(80,140,255,0.25); border-radius: 2px; outline: none; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: #5090ff; border-radius: 50%; cursor: pointer; }
+    input[type=range]::-moz-range-thumb { width: 14px; height: 14px; background: #5090ff; border: 0; border-radius: 50%; cursor: pointer; }
+    input[type=range]:focus-visible { outline: 2px solid #9cc7ff; outline-offset: 4px; }
 
-    /* progress bar */
-    #timeline-wrap {
-      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-      background: rgba(12,12,24,0.82); backdrop-filter: blur(10px);
-      border: 1px solid rgba(80,140,255,0.25); border-radius: 30px;
-      padding: 10px 20px; display: flex; align-items: center; gap: 12px;
-      z-index: 10; min-width: 420px;
-    }
-    #btn-play { font-size: 18px; background: none; border: none; color: #7ab4ff; cursor: pointer; padding: 0 4px; }
-    #btn-play:hover { color: #fff; }
-    #progress { flex: 1; }
-    #frame-label { font-size: 11px; color: #6080a0; min-width: 70px; text-align: right; }
+    /* ─── 上: 手法 ─── */
+    #topbar { position: fixed; top: 0; left: 0; right: 0; height: 52px; z-index: 10; display: flex; align-items: center; gap: 10px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+    #topbar .brand { font-size: 14px; font-weight: 600; color: #7ab4ff; letter-spacing: 0.5px; margin-right: 6px; white-space: nowrap; }
+    #topbar .spacer { flex: 1; }
+    #topbar a.chip { color: #a8c8ff; text-decoration: none; border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; background: rgba(60,90,160,0.35); white-space: nowrap; }
+    #topbar button, #topbar .seg { flex: none; white-space: nowrap; }
 
-    /* info bar */
-    #info {
-      position: fixed; top: 16px; right: 16px;
-      background: rgba(12,12,24,0.75); backdrop-filter: blur(8px);
-      border: 1px solid rgba(80,140,255,0.2); border-radius: 10px;
-      padding: 10px 14px; font-size: 11px; color: #6080a0; line-height: 1.7;
-      z-index: 10;
-    }
-    #info strong { color: #9ab8e0; }
+    /* ─── 左: パラメータ ─── */
+    #panel { position: fixed; top: 64px; left: 12px; width: 260px; max-height: calc(100vh - 64px - 96px); overflow-y: auto; z-index: 10; padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+    #panel.hidden { display: none; }
+    #panel h2 { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 0.5px; margin-bottom: 8px; }
+    .section { margin-bottom: 16px; }
+    .section:last-child { margin-bottom: 0; }
+    .field { margin-bottom: 9px; }
+    .field > .head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #b8c6dd; margin-bottom: 4px; }
+    .field > .head .val { color: #9ab8e0; min-width: 52px; text-align: right; }
+    fieldset { border: 0; }
+    fieldset:disabled { opacity: 0.45; }
+    .hint { font-size: 11px; color: var(--muted); line-height: 1.6; }
 
-    /* drop zone overlay */
-    #drop-overlay {
-      display: none; position: fixed; inset: 0;
-      background: rgba(10,20,60,0.88);
-      align-items: center; justify-content: center;
-      font-size: 22px; color: #7ab4ff; z-index: 100;
-      border: 3px dashed rgba(80,140,255,0.5);
-    }
+    /* ─── 右下: 凡例 ─── */
+    #legend { position: fixed; z-index: 9; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; width: 190px; }
+    #legend .title { font-size: 11px; color: #b8c6dd; margin-bottom: 5px; }
+    #legend canvas { display: block; width: 100%; height: 10px; border-radius: 2px; }
+    #legend .scale { display: flex; justify-content: space-between; font-size: 11px; color: #9ab8e0; margin-top: 4px; }
+    #legend .sub { font-size: 10px; color: var(--muted); margin-top: 3px; }
+
+    /* ─── 比較モードのラベル ─── */
+    .vlabel .note { font-family: 'Segoe UI', sans-serif; color: var(--muted); max-width: 300px; line-height: 1.4; margin-top: 2px; }
+    .vlabel { position: fixed; z-index: 8; padding: 3px 8px; font-size: 11px; color: #cfe0ff; background: rgba(12,12,24,0.8); border: 1px solid var(--line); border-radius: 6px; pointer-events: none; }
+
+    /* ─── 下: タイムライン + 注記 ─── */
+    #timeline { position: fixed; left: 12px; right: 12px; bottom: 34px; z-index: 10; display: flex; align-items: center; gap: 14px; padding: 9px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+    #btn-play { padding: 6px 8px; }
+    #progress { flex: 1; min-width: 80px; }
+    #stat { font-size: 12px; color: #9ab8e0; white-space: nowrap; }
+    #timeline label.sel { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    #note { position: fixed; left: 12px; right: 12px; bottom: 8px; z-index: 10; height: 20px; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+
+    #toast { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 50; max-width: 70vw; padding: 8px 14px; font-size: 12px; background: #1a2038; border: 1px solid #60a0ff; border-radius: 8px; display: none; }
+    #toast.show { display: block; }
+    #drop-overlay { display: none; position: fixed; inset: 0; background: rgba(10,20,60,0.88); align-items: center; justify-content: center; gap: 10px; font-size: 22px; color: #7ab4ff; z-index: 100; border: 3px dashed rgba(80,140,255,0.5); }
     #drop-overlay.active { display: flex; }
+    #drop-overlay svg.i { width: 28px; height: 28px; }
+
+    @media (max-width: 820px) { #panel { width: calc(100vw - 24px); } }
   </style>
 </head>
 <body>
 
-<!-- ── LEFT PANEL ── -->
-<div id="panel">
-  <h1>⚡ FluidKit Viewer</h1>
+<!-- 線画アイコン(絵文字・記号は使わない) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+  <symbol id="i-compare" viewBox="0 0 24 24"><rect x="3" y="5" width="8" height="14" rx="1.5"/><rect x="13" y="5" width="8" height="14" rx="1.5"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+  <symbol id="i-clear" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></symbol>
+  <symbol id="i-demo" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 12c3-6 5-6 8 0s5 6 8 0 3-3 4-2"/></symbol>
+</svg>
 
-  <div class="section">
-    <label>データ読み込み</label>
-    <div class="btn-row">
-      <button id="btn-load-file">📂 JSON を開く</button>
-      <button id="btn-demo">🔬 デモデータ</button>
-    </div>
-    <input type="file" id="file-input" accept=".json,.json.gz,.gz" style="display:none" />
+<header id="topbar">
+  <span class="brand">FluidKit Viewer</span>
+  <div class="seg" id="seg-method" role="group" aria-label="手法">
+    <button data-method="SPH"  aria-pressed="false">SPH</button>
+    <button data-method="FLIP" aria-pressed="false">FLIP</button>
+    <button data-method="GNN"  aria-pressed="false">GNN</button>
+    <button data-method="GRID" aria-pressed="false">格子法</button>
+    <button data-method="CURL" aria-pressed="false">カール</button>
   </div>
+  <button id="btn-compare" class="chip has-tip" aria-pressed="false" disabled><svg class="i"><use href="#i-compare"/></svg>比較</button>
+  <span class="spacer"></span>
+  <a class="chip" href="ripple.html"><svg class="i"><use href="#i-wave"/></svg>波紋・コースティクス</a>
+  <button id="btn-demo" class="chip"><svg class="i"><use href="#i-demo"/></svg>デモ</button>
+  <button id="btn-load-file" class="chip"><svg class="i"><use href="#i-open"/></svg>JSON を開く</button>
+  <button id="btn-clear" class="chip" aria-label="読み込んだデータを消去"><svg class="i"><use href="#i-clear"/></svg>消去</button>
+  <button id="btn-panel" class="chip" aria-pressed="true" aria-label="パラメータパネルの表示切替"><svg class="i"><use href="#i-settings"/></svg>設定</button>
+  <input type="file" id="file-input" accept=".json,.json.gz,.gz" multiple style="display:none" />
+</header>
 
+<aside id="panel">
   <div class="section">
-    <label>表示モード</label>
-    <div class="btn-row">
-      <button id="btn-mode-particle" class="active">● パーティクル</button>
-      <button id="btn-mode-mesh">▲ メッシュ</button>
+    <h2>表示</h2>
+    <div class="field">
+      <label class="switch"><span>粒子</span><input type="checkbox" id="sw-mode" role="switch" aria-label="メッシュ表示に切り替え"><span class="track"></span><span>メッシュ</span></label>
     </div>
-  </div>
-
-  <div class="section">
-    <label>カラーマップ</label>
-    <div class="btn-row">
-      <button id="cm-depth" class="active">深度</button>
-      <button id="cm-speed">速度</button>
-      <button id="cm-heat">Heat</button>
-      <button id="cm-ocean">Ocean</button>
-    </div>
-  </div>
-
-  <div class="section">
-    <label>パーティクルサイズ</label>
-    <div class="slider-row">
+    <div class="field">
+      <div class="head"><label for="sl-size">サイズ<span class="tip" tabindex="0" data-tip="粒子の見かけの大きさ(粒子間隔に対する倍率)。大きいほど重なって明るく見える。データは変わらない。"><svg class="i"><use href="#i-info"/></svg></span></label><span class="val num" id="lbl-size">3.0</span></div>
       <input type="range" id="sl-size" min="0.5" max="8" step="0.1" value="3.0" />
-      <span id="lbl-size">3.0</span>
     </div>
-  </div>
-
-  <div class="section">
-    <label>不透明度</label>
-    <div class="slider-row">
+    <div class="field">
+      <div class="head"><label for="sl-opacity">不透明度<span class="tip" tabindex="0" data-tip="加算ブレンドのため、粒子が重なる所ほど明るくなる。"><svg class="i"><use href="#i-info"/></svg></span></label><span class="val num" id="lbl-opacity">0.85</span></div>
       <input type="range" id="sl-opacity" min="0.1" max="1" step="0.05" value="0.85" />
-      <span id="lbl-opacity">0.85</span>
     </div>
   </div>
 
   <div class="section">
-    <label>再生速度</label>
-    <div class="slider-row">
-      <input type="range" id="sl-speed" min="0.1" max="4" step="0.1" value="1.0" />
-      <span id="lbl-speed">1.0×</span>
+    <h2>カラー</h2>
+    <div class="seg" id="seg-color" role="group" aria-label="カラーモード">
+      <button data-cm="0" aria-pressed="true">深度</button>
+      <button data-cm="1" aria-pressed="false">速度</button>
+      <button data-cm="2" aria-pressed="false">熱</button>
+      <button data-cm="3" aria-pressed="false">海</button>
     </div>
   </div>
 
   <div class="section">
-    <label>背景</label>
-    <div class="btn-row">
-      <button id="bg-dark" class="active">Dark</button>
-      <button id="bg-blue">Ocean</button>
-      <button id="bg-white">Light</button>
+    <h2>デモのパラメータ(変更は即時反映)</h2>
+    <fieldset id="demo-params">
+      <div class="field">
+        <div class="head"><label for="sl-gravity">重力<span class="tip" tabindex="0" data-tip="下向きの加速度[m/s²]。大きいほど速く落ちる。"><svg class="i"><use href="#i-info"/></svg></span></label><span class="val num" id="lbl-gravity">9.8</span></div>
+        <input type="range" id="sl-gravity" min="0" max="20" step="0.1" value="9.8" />
+      </div>
+      <div class="field">
+        <div class="head"><label for="sl-rest">反発係数<span class="tip" tabindex="0" data-tip="壁や床で跳ね返るときに速度が残る割合。0 で止まり、1 で減衰しない。"><svg class="i"><use href="#i-info"/></svg></span></label><span class="val num" id="lbl-rest">0.25</span></div>
+        <input type="range" id="sl-rest" min="0" max="1" step="0.05" value="0.25" />
+      </div>
+      <div class="field">
+        <div class="head"><label for="sl-count">粒子数<span class="tip" tabindex="0" data-tip="多いほど滑らかだが重くなる。10万粒子まで試せる。"><svg class="i"><use href="#i-info"/></svg></span></label><span class="val num" id="lbl-count">600</span></div>
+        <input type="range" id="sl-count" min="100" max="100000" step="100" value="600" />
+      </div>
+    </fieldset>
+    <p class="hint" id="demo-hint">読み込んだ JSON は固定データのため、ここでは変更できません。「デモ」を選ぶと調整できます。</p>
+  </div>
+
+  <div class="section">
+    <h2>背景</h2>
+    <div class="seg" id="seg-bg" role="group" aria-label="背景">
+      <button data-bg="dark" aria-pressed="true">暗</button>
+      <button data-bg="blue" aria-pressed="false">海</button>
+      <button data-bg="white" aria-pressed="false">明</button>
     </div>
   </div>
+
+  <p class="hint">ドラッグ: 回転 / スクロール: ズーム / JSON をドロップで読み込み(複数可)。2 手法以上を読み込むと「比較」が使えます。</p>
+</aside>
+
+<div id="legend" aria-label="凡例">
+  <div class="title" id="lg-title">-</div>
+  <canvas id="lg-bar" width="170" height="10"></canvas>
+  <div class="scale num"><span id="lg-min">-</span><span id="lg-max">-</span></div>
+  <div class="sub" id="lg-sub"></div>
 </div>
+<div id="labels"></div>
 
-<!-- ── INFO ── -->
-<div id="info">
-  <strong>フレーム:</strong> <span id="info-frame">-</span><br>
-  <strong>粒子数:</strong> <span id="info-particles">-</span><br>
-  <strong>FPS:</strong> <span id="info-fps">-</span><br>
-  <strong>ドラッグ:</strong> 回転 | スクロール: ズーム
+<div id="timeline">
+  <button id="btn-play" aria-label="再生"><svg class="i" id="ic-play"><use href="#i-pause"/></svg></button>
+  <input type="range" id="progress" min="0" max="100" value="0" step="1" aria-label="再生位置" />
+  <span id="stat" class="num">フレーム 0/0 · 粒子 0 · 0 fps</span>
+  <label class="sel">速度
+    <select id="sel-speed" aria-label="再生速度">
+      <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option>
+      <option value="2">2×</option><option value="4">4×</option>
+    </select>
+  </label>
+  <label class="switch"><input type="checkbox" id="sw-loop" role="switch" checked><span class="track"></span><span>ループ</span></label>
 </div>
+<div id="note"><svg class="i"><use href="#i-info"/></svg>近似であり、物理的に厳密ではありません(学習用の簡易実装の結果です)</div>
 
-<!-- ── TIMELINE ── -->
-<div id="timeline-wrap">
-  <button id="btn-play">▶</button>
-  <input type="range" id="progress" min="0" max="100" value="0" step="1" />
-  <span id="frame-label">0 / 0</span>
-</div>
-
-<!-- ── DROP OVERLAY ── -->
-<div id="drop-overlay">📂 JSON ファイルをドロップ</div>
-
-<!-- ── CANVAS ── -->
+<div id="toast" role="status"></div>
+<div id="drop-overlay"><svg class="i"><use href="#i-open"/></svg>JSON ファイルをドロップ</div>
 <canvas id="canvas"></canvas>
 
-<!-- Three.js r158 CDN -->
 <script type="importmap">
-{
-  "imports": {
+{ "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
-  }
-}
+} }
 </script>
 
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+const $ = id => document.getElementById(id);
+const fmtInt = n => Math.round(n).toLocaleString('en-US');
+const fmtNum = (v, d = 2) => Number.isFinite(v) ? v.toFixed(d) : '-';
+
+// ══════════════════════════════════════════════
+//  カラーマップ — 描画(LUT テクスチャ)と凡例が同じ関数を使う(単一の定義)
+// ══════════════════════════════════════════════
+const mix = (a, b, t) => a.map((x, i) => x + (b[i] - x) * t);
+const PALETTES = [
+  t => mix(mix([0.02, 0.05, 0.3], [0.1, 0.6, 0.9], t), [0.9, 0.95, 1.0], t * t),            // 深度
+  t => {                                                                                      // 速度
+    const c0 = [0.05, 0.1, 0.2], c1 = [0.1, 0.8, 0.3], c2 = [1.0, 0.8, 0.0], c3 = [1.0, 0.1, 0.05];
+    return t < 0.33 ? mix(c0, c1, t / 0.33) : t < 0.66 ? mix(c1, c2, (t - 0.33) / 0.33) : mix(c2, c3, (t - 0.66) / 0.34);
+  },
+  t => mix([0.05, 0.0, 0.1], [1.0, 0.4, 0.0], t),                                             // 熱
+  t => mix([0.0, 0.05, 0.2], [0.0, 0.8, 0.6], t),                                             // 海
+];
+// qty: そのモードが何の量を色にするか(y = 高さ, speed = 速さ)
+const COLOR_MODES = [
+  { label: '深度', qty: 'y' }, { label: '速度', qty: 'speed' }, { label: '熱', qty: 'speed' }, { label: '海', qty: 'y' },
+];
+
+function buildLut() {
+  const W = 256, H = PALETTES.length, data = new Uint8Array(W * H * 4);
+  for (let m = 0; m < H; m++) for (let x = 0; x < W; x++) {
+    const c = PALETTES[m](x / (W - 1)), o = (m * W + x) * 4;
+    data[o] = Math.round(c[0] * 255); data[o + 1] = Math.round(c[1] * 255); data[o + 2] = Math.round(c[2] * 255); data[o + 3] = 255;
+  }
+  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+  tex.magFilter = tex.minFilter = THREE.LinearFilter;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 // ══════════════════════════════════════════════
 //  SHADER — spherical soft particle
 // ══════════════════════════════════════════════
 const VS = `
   uniform float uSize;
+  uniform float uSpacing;      // 粒子間隔(世界座標)。サイズは間隔に対する倍率で決める
+  uniform float uPxPerWorld;   // 距離 1 での 1 世界単位あたりの画素数
   attribute float aSpeed;
   varying float vSpeed;
   varying float vY;
-
   void main() {
     vSpeed = aSpeed;
     vY = position.y;
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = uSize * (300.0 / -mv.z);
+    gl_PointSize = uSize * 0.6 * uSpacing * uPxPerWorld / -mv.z;
     gl_Position = projectionMatrix * mv;
   }
 `;
 const FS = `
   uniform float uOpacity;
-  uniform int   uColorMode;   // 0=depth 1=speed 2=heat 3=ocean
-  uniform float uYMin;
-  uniform float uYMax;
+  uniform int   uColorMode;   // 0=深度 1=速度 2=熱 3=海
+  uniform float uYMin, uYMax, uSpeedMin, uSpeedMax;
+  uniform sampler2D uLut;
   varying float vSpeed;
   varying float vY;
-
-  vec3 colorDepth(float t) {
-    // deep blue → cyan → white
-    return mix(mix(vec3(0.02,0.05,0.3), vec3(0.1,0.6,0.9), t),
-               vec3(0.9,0.95,1.0), t*t);
-  }
-  vec3 colorSpeed(float t) {
-    // dark → green → yellow → red
-    vec3 c0 = vec3(0.05,0.1,0.2);
-    vec3 c1 = vec3(0.1,0.8,0.3);
-    vec3 c2 = vec3(1.0,0.8,0.0);
-    vec3 c3 = vec3(1.0,0.1,0.05);
-    if(t<0.33) return mix(c0,c1,t/0.33);
-    if(t<0.66) return mix(c1,c2,(t-0.33)/0.33);
-    return mix(c2,c3,(t-0.66)/0.34);
-  }
-  vec3 colorHeat(float t) {
-    return mix(vec3(0.05,0.0,0.1), vec3(1.0,0.4,0.0), t);
-  }
-  vec3 colorOcean(float t) {
-    return mix(vec3(0.0,0.05,0.2), vec3(0.0,0.8,0.6), t);
-  }
-
   void main() {
     vec2 uv = gl_PointCoord - 0.5;
     float d = length(uv);
-    if(d > 0.5) discard;
+    if (d > 0.5) discard;
     float rim = 1.0 - smoothstep(0.25, 0.5, d);
-
     float t;
-    vec3 col;
-    if(uColorMode == 1) {
-      t = clamp(vSpeed / 5.0, 0.0, 1.0);
-      col = colorSpeed(t);
-    } else if(uColorMode == 2) {
-      t = clamp(vSpeed / 3.0, 0.0, 1.0);
-      col = colorHeat(t);
-    } else if(uColorMode == 3) {
-      float span = max(uYMax - uYMin, 0.001);
-      t = clamp((vY - uYMin) / span, 0.0, 1.0);
-      col = colorOcean(t);
-    } else {
-      float span = max(uYMax - uYMin, 0.001);
-      t = clamp((vY - uYMin) / span, 0.0, 1.0);
-      col = colorDepth(t);
-    }
-
-    col += vec3(0.15) * (1.0 - d / 0.5);   // highlight
+    if (uColorMode == 1 || uColorMode == 2) t = clamp((vSpeed - uSpeedMin) / max(uSpeedMax - uSpeedMin, 1e-4), 0.0, 1.0);
+    else                                    t = clamp((vY - uYMin) / max(uYMax - uYMin, 1e-4), 0.0, 1.0);
+    vec3 col = texture2D(uLut, vec2(t, (float(uColorMode) + 0.5) / 4.0)).rgb;
+    col += vec3(0.15) * (1.0 - d / 0.5);
     gl_FragColor = vec4(col, rim * uOpacity);
   }
 `;
 
 // ══════════════════════════════════════════════
-//  FluidViewer
+//  データセット(読み込んだ 1 本の JSON)
 // ══════════════════════════════════════════════
-class FluidViewer {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this._initScene();
-    this._initParticles();
-    this._initGrid();
+const METHOD_LABEL = { SPH: 'SPH', FLIP: 'FLIP', GNN: 'GNN', GRID: '格子法', CURL: 'カール', DEMO: 'デモ' };
+// 「同じ入力を複数方式で」見るための、手法ごとの一言解説(比較モードのラベルとチップのツールチップに出す)
+const METHOD_NOTE = {
+  SPH: '粒子どうしが押し合う。圧力は状態方程式で近似(陽解法で刻みが小さい)',
+  FLIP: '粒子 + 格子。格子で圧力を解いて粒子に戻す',
+  GNN: '学習済みモデルが次フレームを予測する(物理方程式は解かない)',
+  GRID: '密度を格子上で流す(気体向け)。水の自由表面は扱わない',
+  CURL: 'ノイズの回転で流す。発散は小さいが外力や壁に応答しない',
+  DEMO: 'ブラウザ内の簡易デモ(重力と壁での反発のみ)',
+};
+let _dsId = 0;
 
-    this.frames = [];
-    this.speeds = [];
-    this.meta   = null;
-    this.currentFrame = 0;
-    this.playing = false;
-    this.playbackSpeed = 1.0;
-    this.mode = 'particle';   // 'particle' | 'mesh'
-    this.colorMode = 0;       // 0=depth 1=speed 2=heat 3=ocean
+function guessMethod(meta) {
+  if (meta.method) return String(meta.method).toUpperCase();
+  const p = (meta.preset || '').toLowerCase();
+  if (p.includes('neural')) return 'GNN';
+  if (p === 'demo') return 'DEMO';
+  return 'SPH';
+}
 
-    this._accTime = 0;
-    this._lastTs  = null;
+/** 先頭フレームの広がりと粒子数から、粒子間隔の目安を出す(ほぼ平面のデータは面積で見積もる)。 */
+function estimateSpacing(flat) {
+  const n = flat.length / 3, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) { const v = flat[i * 3 + k]; if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; }
+  const e = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]].sort((a, b) => b - a);
+  const sp = e[2] < 0.05 * e[0] ? Math.sqrt(e[0] * e[1] / n) : Math.cbrt(e[0] * e[1] * e[2] / n);
+  return Number.isFinite(sp) && sp > 1e-6 ? sp : 0.05;
+}
 
-    this._animate = this._animate.bind(this);
-    requestAnimationFrame(this._animate);
+function prepareDataset(json, name) {
+  if (!json || !Array.isArray(json.frames) || !json.metadata) throw new Error('metadata / frames がありません');
+  const meta = json.metadata, frames = json.frames;
+  if (frames.length === 0) throw new Error('frames が空です');
+  const fps = meta.fps || 30;
+  let speeds = Array.isArray(json.speeds) ? json.speeds : [];
+  let derived = false;
+  if (speeds.length === 0 && frames.length > 1) {          // 速度が無いデータ(GNN など)は位置差から算出
+    derived = true;
+    speeds = frames.map((f, i) => {
+      const a = frames[Math.min(i + 1, frames.length - 1)], b = frames[Math.min(i + 1, frames.length - 1) === i ? i - 1 : i];
+      const n = Math.min(f.length, a.length, b.length) / 3, out = new Array(f.length / 3).fill(0);
+      for (let k = 0; k < n; k++) {
+        const dx = a[k * 3] - b[k * 3], dy = a[k * 3 + 1] - b[k * 3 + 1], dz = a[k * 3 + 2] - b[k * 3 + 2];
+        out[k] = Math.sqrt(dx * dx + dy * dy + dz * dz) * fps;
+      }
+      return out;
+    });
   }
+  // 実データの最小・最大(凡例と色の範囲に使う)
+  let maxN = 0, yMin = Infinity, yMax = -Infinity, sMin = Infinity, sMax = -Infinity;
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i];
+    maxN = Math.max(maxN, f.length / 3);
+    for (let k = 1; k < f.length; k += 3) { const y = f[k]; if (y < yMin) yMin = y; if (y > yMax) yMax = y; }
+    const s = speeds[i];
+    if (s) for (let k = 0; k < s.length; k++) { const v = s[k]; if (v < sMin) sMin = v; if (v > sMax) sMax = v; }
+  }
+  if (!Number.isFinite(sMin)) { sMin = 0; sMax = 1; }
+  const b = meta.bounds || { min: [-1.5, 0, -1.5], max: [1.5, 3, 1.5] };
+  return {
+    id: ++_dsId, name, meta, frames, speeds, fps, derivedSpeed: derived, spacing: estimateSpacing(frames[0]),
+    method: guessMethod(meta), bounds: b, maxN,
+    n: frames.length, duration: frames.length / fps,
+    range: { y: [yMin, yMax], speed: [sMin, sMax] },
+  };
+}
 
-  // ── scene ──────────────────────────────────
-  _initScene() {
-    const W = window.innerWidth, H = window.innerHeight;
+// ══════════════════════════════════════════════
+//  View — 1 データセット分のシーン
+// ══════════════════════════════════════════════
+const MESH_MAX = 300;
+const COMPARE_MAX_PER_VIEW = 25000;     // 比較モードの描画負荷対策(粒子数の上限)
+const _m4 = new THREE.Matrix4();
 
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    this.renderer.setSize(W, H);
-
-    this.scene  = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(55, W/H, 0.01, 200);
-    this.camera.position.set(0, 2, 6);
-
-    this.controls = new OrbitControls(this.camera, this.canvas);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-
-    // ambient + dir light (for mesh mode)
+class View {
+  constructor(viewer, ds) {
+    this.viewer = viewer; this.ds = ds; this.frame = -1;
+    this.scene = new THREE.Scene();
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.4));
     const dir = new THREE.DirectionalLight(0xffffff, 1.0);
     dir.position.set(3, 8, 5);
     this.scene.add(dir);
 
-    window.addEventListener('resize', () => {
-      const w = window.innerWidth, h = window.innerHeight;
-      this.renderer.setSize(w, h);
-      this.camera.aspect = w / h;
-      this.camera.updateProjectionMatrix();
-    });
-  }
+    const b = ds.bounds;
+    this.grid = new THREE.GridHelper(6, 12, 0x203060, 0x182040);
+    this.grid.position.set((b.min[0] + b.max[0]) / 2, b.min[1], (b.min[2] + b.max[2]) / 2);
+    this.scene.add(this.grid);
 
-  _initGrid() {
-    this.gridHelper = new THREE.GridHelper(6, 12, 0x203060, 0x182040);
-    this.scene.add(this.gridHelper);
-  }
-
-  _initParticles() {
-    const MAX = 8000;
     const geo = new THREE.BufferGeometry();
-    const pos  = new Float32Array(MAX * 3);
-    const spd  = new Float32Array(MAX);
-    geo.setAttribute('position', new THREE.BufferAttribute(pos,  3));
-    geo.setAttribute('aSpeed',   new THREE.BufferAttribute(spd,  1));
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ds.maxN * 3), 3));
+    geo.setAttribute('aSpeed', new THREE.BufferAttribute(new Float32Array(ds.maxN), 1));
+    this.points = new THREE.Points(geo, viewer.material);
+    this.points.frustumCulled = false;
+    this.scene.add(this.points);
+
+    this.mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.04, 6, 6),
+      new THREE.MeshPhongMaterial({ color: 0x2080ff, transparent: true, opacity: 0.7 }), MESH_MAX);
+    this.mesh.frustumCulled = false;
+    this.mesh.count = 0;
+    this.scene.add(this.mesh);
+    this.applyMode();
+    this.drawCount = 0;
+  }
+
+  applyMode() {
+    const meshMode = this.viewer.mode === 'mesh';
+    this.points.visible = !meshMode;
+    this.mesh.visible = meshMode;
+  }
+
+  setFrame(idx) {
+    const ds = this.ds;
+    idx = Math.max(0, Math.min(idx, ds.n - 1));
+    const flat = ds.frames[idx], n = flat.length / 3;
+    const geo = this.points.geometry;
+    geo.getAttribute('position').array.set(flat);
+    const spd = ds.speeds[idx];
+    if (spd) geo.getAttribute('aSpeed').array.set(spd.length > n ? spd.slice(0, n) : spd);
+    geo.getAttribute('position').needsUpdate = true;
+    geo.getAttribute('aSpeed').needsUpdate = true;
+    this.drawCount = this.viewer.compare ? Math.min(n, COMPARE_MAX_PER_VIEW) : n;
+    geo.setDrawRange(0, this.drawCount);
+    this.frame = idx; this.n = n;
+    if (this.viewer.mode === 'mesh') this._updateMesh(flat, n);
+  }
+
+  _updateMesh(flat, n) {                         // 軽量化: 間引いた粒子をインスタンス描画(毎フレームの生成なし)
+    const step = Math.max(1, Math.ceil(n / MESH_MAX));
+    let c = 0;
+    for (let i = 0; i < n && c < MESH_MAX; i += step, c++) {
+      _m4.makeTranslation(flat[i * 3], flat[i * 3 + 1], flat[i * 3 + 2]);
+      this.mesh.setMatrixAt(c, _m4);
+    }
+    this.mesh.count = c;
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  setBackground(color) { this.scene.background = new THREE.Color(color); }
+
+  dispose() {
+    this.points.geometry.dispose();
+    this.mesh.geometry.dispose(); this.mesh.material.dispose(); this.mesh.dispose();
+  }
+}
+
+// ══════════════════════════════════════════════
+//  FluidViewer
+// ══════════════════════════════════════════════
+const BG = { dark: 0x0a0a12, blue: 0x030d1a, white: 0xe8ecf0 };
+const BG_CSS = { dark: '#0a0a12', blue: '#030d1a', white: '#e8ecf0' };
+
+class FluidViewer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.datasets = []; this.views = new Map();
+    this.activeId = null; this.compare = false;
+    this.time = 0; this.playing = false; this.playbackSpeed = 1; this.loop = true;
+    this.mode = 'particle'; this.colorMode = 0; this.bg = 'dark';
+    this._fitKey = ''; this._layoutKey = '';
+
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.renderer.setSize(innerWidth, innerHeight);
+    this.camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 200);
+    this.camera.position.set(0, 2, 6);
+    this.controls = new OrbitControls(this.camera, canvas);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.08;
 
     this.uniforms = {
-      uSize:      { value: 3.0 },
-      uOpacity:   { value: 0.85 },
-      uColorMode: { value: 0 },
-      uYMin:      { value: 0.0 },
-      uYMax:      { value: 3.0 },
+      uSize: { value: 3.0 }, uOpacity: { value: 0.85 }, uColorMode: { value: 0 }, uSpacing: { value: 0.05 }, uPxPerWorld: { value: 600 },
+      uYMin: { value: 0 }, uYMax: { value: 3 }, uSpeedMin: { value: 0 }, uSpeedMax: { value: 1 },
+      uLut: { value: buildLut() },
     };
-    const mat = new THREE.ShaderMaterial({
-      uniforms: this.uniforms,
-      vertexShader: VS,
-      fragmentShader: FS,
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
+    this.material = new THREE.ShaderMaterial({
+      uniforms: this.uniforms, vertexShader: VS, fragmentShader: FS,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     });
-    this.particles = new THREE.Points(geo, mat);
-    this.scene.add(this.particles);
 
-    // mesh mode placeholder (simple sphere mesh cloud — replaced per frame if OBJ available)
-    this.meshGroup = new THREE.Group();
-    this.scene.add(this.meshGroup);
-    this.particles.visible  = true;
-    this.meshGroup.visible  = false;
+    addEventListener('resize', () => this.renderer.setSize(innerWidth, innerHeight));
+    this._lastTs = null;
+    this._animate = this._animate.bind(this);
+    requestAnimationFrame(this._animate);
   }
 
-  // ── data loading ───────────────────────────
-  loadJSON(json) {
-    this.meta   = json.metadata;
-    this.frames = json.frames  || [];
-    this.speeds = json.speeds  || [];
-    this.currentFrame = 0;
-    this._accTime = 0;
-
-    const b = this.meta.bounds;
-    if (b) {
-      this.uniforms.uYMin.value = b.min[1];
-      this.uniforms.uYMax.value = b.max[1];
-      // カメラをデータに合わせる
-      const cx = (b.min[0]+b.max[0])/2;
-      const cy = (b.min[1]+b.max[1])/2;
-      const cz = (b.min[2]+b.max[2])/2;
-      const span = Math.max(b.max[0]-b.min[0], b.max[1]-b.min[1], b.max[2]-b.min[2]);
-      this.camera.position.set(cx, cy + span*0.4, cz + span*1.4);
-      this.controls.target.set(cx, cy, cz);
-      this.gridHelper.position.set(cx, b.min[1], cz);
-    }
-
-    this._updateFrame(0);
-    document.getElementById('info-particles').textContent = this.meta.particleCount;
-    document.getElementById('info-fps').textContent = this.meta.fps;
-    document.getElementById('progress').max = this.frames.length - 1;
-    this.playing = true;
-    document.getElementById('btn-play').textContent = '⏸';
+  // ── データセット管理 ──────────────────────────
+  get active() { return this.datasets.find(d => d.id === this.activeId) || null; }
+  get realDatasets() { return this.datasets.filter(d => d.method !== 'DEMO'); }
+  get visible() {
+    if (this.compare) return this.realDatasets.slice(0, 4);
+    return this.active ? [this.active] : [];
   }
 
-  // ── frame update ───────────────────────────
-  _updateFrame(idx) {
-    idx = Math.max(0, Math.min(idx, this.frames.length - 1));
-    this.currentFrame = idx;
-
-    const flat = this.frames[idx];
-    if (!flat || flat.length === 0) return;
-
-    const n   = flat.length / 3;
-    const geo = this.particles.geometry;
-    const posAttr = geo.getAttribute('position');
-    const spdAttr = geo.getAttribute('aSpeed');
-
-    // resize if needed
-    if (posAttr.array.length < flat.length) {
-      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(flat.length), 3));
-      geo.setAttribute('aSpeed',   new THREE.BufferAttribute(new Float32Array(n), 1));
-    }
-
-    const pa = geo.getAttribute('position').array;
-    const sa = geo.getAttribute('aSpeed').array;
-
-    for (let i = 0; i < flat.length; i++) pa[i] = flat[i];
-
-    const frameSpd = this.speeds[idx];
-    if (frameSpd) {
-      for (let i = 0; i < n; i++) sa[i] = frameSpd[i] || 0;
-    }
-
-    geo.getAttribute('position').needsUpdate = true;
-    geo.getAttribute('aSpeed').needsUpdate   = true;
-    geo.setDrawRange(0, n);
-
-    // mesh mode: update spheres
-    if (this.mode === 'mesh') this._updateMeshMode(flat, n);
-
-    // UI
-    document.getElementById('info-frame').textContent  = idx;
-    document.getElementById('frame-label').textContent = `${idx} / ${this.frames.length - 1}`;
-    document.getElementById('progress').value = idx;
+  /** 同じ手法のデータは置き換える。keepTime=true なら再生位置を保つ(デモのパラメータ変更用)。 */
+  addDataset(ds, { keepTime = false } = {}) {
+    const old = this.datasets.findIndex(d => d.method === ds.method);
+    if (old >= 0) this._remove(this.datasets[old]);
+    if (ds.method !== 'DEMO') this.datasets.filter(d => d.method === 'DEMO').forEach(d => this._remove(d));
+    this.datasets.push(ds);
+    const view = new View(this, ds);
+    view.setBackground(BG[this.bg]);
+    this.views.set(ds.id, view);
+    this.activeId = ds.id;
+    if (this.compare && this.realDatasets.length < 2) this.compare = false;
+    if (!keepTime) this.time = 0;
+    this.playing = keepTime ? this.playing : true;
+    this._afterChange(!keepTime);
   }
 
-  _updateMeshMode(flat, n) {
-    // 軽量化: 粒子数を間引いてスフィアで表示
-    const step = Math.max(1, Math.floor(n / 300));
-    while (this.meshGroup.children.length > 0) {
-      this.meshGroup.remove(this.meshGroup.children[0]);
-    }
-    const geo = new THREE.SphereGeometry(0.04, 6, 6);
-    const mat = new THREE.MeshPhongMaterial({ color: 0x2080ff, transparent: true, opacity: 0.7 });
-    for (let i = 0; i < n; i += step) {
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(flat[i*3], flat[i*3+1], flat[i*3+2]);
-      this.meshGroup.add(mesh);
-    }
+  _remove(ds) {
+    this.views.get(ds.id)?.dispose(); this.views.delete(ds.id);
+    this.datasets = this.datasets.filter(d => d.id !== ds.id);
+    if (this.activeId === ds.id) this.activeId = this.datasets.length ? this.datasets[this.datasets.length - 1].id : null;
   }
 
-  // ── animation loop ─────────────────────────
+  clear() {
+    [...this.datasets].forEach(d => this._remove(d));
+    this.compare = false; this.time = 0;
+    this._afterChange(true);
+  }
+
+  selectMethod(method) {
+    const ds = this.datasets.find(d => d.method === method);
+    if (!ds) return;
+    this.compare = false; this.activeId = ds.id; this.time = Math.min(this.time, ds.duration - 1e-6);
+    this._afterChange(true);
+  }
+
+  setCompare(on) {
+    if (on && this.realDatasets.length < 2) return;
+    this.compare = on;
+    this._afterChange(true);
+  }
+
+  _afterChange(refit) {
+    const vis = this.visible;
+    this.views.forEach(v => { v.frame = -1; v.applyMode(); });
+    if (refit) this._fitCamera(vis);
+    this._updateRanges();
+    this._applyTime(true);
+    ui.refresh();
+  }
+
+  _fitCamera(vis) {
+    if (!vis.length) return;
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    vis.forEach(d => { for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], d.bounds.min[k]); hi[k] = Math.max(hi[k], d.bounds.max[k]); } });
+    const key = lo.join() + '|' + hi.join();
+    if (key === this._fitKey) return;                // 同じ範囲なら視点を保つ
+    this._fitKey = key;
+    const c = lo.map((v, k) => (v + hi[k]) / 2);
+    const span = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+    this.camera.position.set(c[0], c[1] + span * 0.4, c[2] + span * 1.4);
+    this.controls.target.set(c[0], c[1], c[2]);
+  }
+
+  /** 色の範囲 = 表示中の全データの実際の最小・最大(比較モードは全ビュー共通)。 */
+  _updateRanges() {
+    const vis = this.visible;
+    if (!vis.length) return;
+    const u = this.uniforms;
+    u.uYMin.value = Math.min(...vis.map(d => d.range.y[0]));
+    u.uYMax.value = Math.max(...vis.map(d => d.range.y[1]));
+    u.uSpeedMin.value = Math.min(...vis.map(d => d.range.speed[0]));
+    u.uSpeedMax.value = Math.max(...vis.map(d => d.range.speed[1]));
+  }
+
+  // ── 時間 ──────────────────────────────────────
+  get master() {                                     // 最も長いデータをタイムラインの基準にする
+    return this.visible.reduce((a, d) => (!a || d.duration > a.duration ? d : a), null);
+  }
+  get duration() { return this.master ? this.master.duration : 0; }
+
+  frameOf(ds) { return Math.min(ds.n - 1, Math.floor(this.time * ds.fps + 1e-6)); }
+
+  _applyTime(force = false) {
+    let changed = force;
+    for (const ds of this.visible) {
+      const v = this.views.get(ds.id), idx = this.frameOf(ds);
+      if (force || v.frame !== idx) { v.setFrame(idx); changed = true; }
+    }
+    if (changed) ui.updateStat();
+  }
+
+  seekFrame(masterIdx) {
+    const m = this.master; if (!m) return;
+    this.time = Math.min(masterIdx / m.fps, m.duration - 1e-6);
+    this._applyTime();
+  }
+
+  setPlaying(p) { this.playing = p; ui.updatePlay(); }
+
+  // ── 表示設定 ──────────────────────────────────
+  setMode(mode) {
+    this.mode = mode;
+    this.views.forEach(v => { v.applyMode(); v.frame = -1; });
+    this._applyTime(true);
+  }
+  setColorMode(cm) { this.colorMode = cm; this.uniforms.uColorMode.value = cm; ui.refresh(); }
+  setBackground(style) {
+    this.bg = style;
+    document.body.style.background = BG_CSS[style];
+    this.views.forEach(v => v.setBackground(BG[style]));
+    ui.refresh();
+  }
+
+  // ── レイアウト(コンテンツ領域を手法数で分割) ──
+  contentRect() {
+    const top = $('topbar').offsetHeight + 8;
+    const bottom = innerHeight - $('timeline').getBoundingClientRect().top + 8;
+    const panel = $('panel');
+    const left = panel.classList.contains('hidden') || innerWidth <= 820 ? 12 : panel.getBoundingClientRect().right + 12;
+    return { x: left, y: top, w: Math.max(80, innerWidth - 12 - left), h: Math.max(80, innerHeight - top - bottom) };
+  }
+
+  layout() {
+    const r = this.contentRect(), vis = this.visible;
+    if (!vis.length) return [];
+    if (vis.length === 1) return [{ ds: vis[0], ...r }];
+    const cols = 2, rows = Math.ceil(vis.length / cols), gap = 6;
+    const w = (r.w - gap * (cols - 1)) / cols, h = (r.h - gap * (rows - 1)) / rows;
+    return vis.map((ds, i) => ({ ds, x: r.x + (i % cols) * (w + gap), y: r.y + Math.floor(i / cols) * (h + gap), w, h }));
+  }
+
+  // ── ループ ────────────────────────────────────
   _animate(ts) {
     requestAnimationFrame(this._animate);
-
-    if (this._lastTs !== null && this.playing && this.frames.length > 0) {
-      const dt  = (ts - this._lastTs) / 1000;
-      this._accTime += dt * this.playbackSpeed;
-      const fpsDt = 1.0 / (this.meta?.fps || 30);
-      while (this._accTime >= fpsDt) {
-        this._accTime -= fpsDt;
-        const next = this.currentFrame + 1;
-        if (next >= this.frames.length) {
-          this._updateFrame(0);   // loop
-        } else {
-          this._updateFrame(next);
-        }
+    if (this._lastTs !== null && this.playing && this.visible.length) {
+      this.time += (ts - this._lastTs) / 1000 * this.playbackSpeed;
+      const dur = this.duration;
+      if (this.time >= dur) {
+        if (this.loop) this.time %= dur;
+        else { this.time = dur - 1e-6; this.setPlaying(false); }
       }
+      this._applyTime();
     }
     this._lastTs = ts;
 
     this.controls.update();
-    this.renderer.render(this.scene, this.camera);
-  }
-
-  // ── public controls ────────────────────────
-  togglePlay() {
-    this.playing = !this.playing;
-    document.getElementById('btn-play').textContent = this.playing ? '⏸' : '▶';
-  }
-
-  seekTo(idx) { this._updateFrame(+idx); }
-
-  setMode(mode) {
-    this.mode = mode;
-    this.particles.visible = (mode === 'particle');
-    this.meshGroup.visible = (mode === 'mesh');
-    if (mode === 'mesh' && this.frames.length > 0) {
-      const flat = this.frames[this.currentFrame];
-      this._updateMeshMode(flat, flat.length / 3);
+    const r = this.renderer, cells = this.layout();
+    r.setScissorTest(true);
+    r.setViewport(0, 0, innerWidth, innerHeight); r.setScissor(0, 0, innerWidth, innerHeight);
+    r.setClearColor(BG[this.bg], 1); r.clear();
+    for (const c of cells) {
+      const yb = innerHeight - (c.y + c.h);
+      r.setViewport(c.x, yb, c.w, c.h); r.setScissor(c.x, yb, c.w, c.h);
+      this.camera.aspect = c.w / c.h; this.camera.updateProjectionMatrix();
+      this.uniforms.uPxPerWorld.value = c.h * r.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)));
+      this.uniforms.uSpacing.value = c.ds.spacing;
+      r.render(this.views.get(c.ds.id).scene, this.camera);
     }
-    document.getElementById('btn-mode-particle').classList.toggle('active', mode === 'particle');
-    document.getElementById('btn-mode-mesh').classList.toggle('active', mode === 'mesh');
-  }
-
-  setColorMode(cm) {
-    this.colorMode = cm;
-    this.uniforms.uColorMode.value = cm;
-    ['cm-depth','cm-speed','cm-heat','cm-ocean'].forEach((id, i) => {
-      document.getElementById(id).classList.toggle('active', i === cm);
-    });
-  }
-
-  setBackground(style) {
-    const colors = { dark: '#0a0a12', blue: '#030d1a', white: '#e8ecf0' };
-    document.body.style.background = colors[style] || colors.dark;
-    const fog = { dark: 0x0a0a12, blue: 0x030d1a, white: 0xe8ecf0 };
-    this.scene.background = new THREE.Color(fog[style]);
-    ['bg-dark','bg-blue','bg-white'].forEach(id => {
-      document.getElementById(id).classList.toggle('active', id === `bg-${style}`);
-    });
+    const key = cells.map(c => [c.ds.id, c.x | 0, c.y | 0, c.w | 0, c.h | 0].join()).join(';') + innerWidth;
+    if (key !== this._layoutKey) { this._layoutKey = key; ui.placeOverlays(cells); }
   }
 }
 
 // ══════════════════════════════════════════════
-//  Demo data generator (ブラウザ内簡易SPH)
+//  デモデータ(ブラウザ内の簡易ばね落下。SPH ではない)
 // ══════════════════════════════════════════════
-function generateDemo() {
-  const N = 600, FRAMES = 90, DT = 0.025;
-  const pos = [], vel = [];
-  // 球形初期配置
-  while (pos.length < N) {
-    const x = (Math.random()-0.5)*1.0;
-    const y = (Math.random()-0.5)*1.0 + 1.8;
-    const z = (Math.random()-0.5)*1.0;
-    if (x*x + (y-1.8)*(y-1.8) + z*z < 0.25) {
-      pos.push([x, y, z]);
-      vel.push([(Math.random()-0.5)*0.1, (Math.random()-0.5)*0.1, (Math.random()-0.5)*0.1]);
+function generateDemo({ g = 9.8, restitution = 0.25, n = 600 } = {}) {
+  const FRAMES = n <= 5000 ? 90 : Math.max(20, Math.floor(450000 / n)), DT = 0.025, pos = [], vel = [];   // 大粒子数はフレーム数を減らしてメモリを抑える
+  while (pos.length < n) {
+    const x = (Math.random() - 0.5), y = (Math.random() - 0.5), z = (Math.random() - 0.5);
+    if (x * x + y * y + z * z < 0.25) {
+      pos.push([x, y + 1.8, z]);
+      vel.push([(Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * 0.1]);
     }
   }
   const frames = [], speeds = [];
   for (let f = 0; f < FRAMES; f++) {
-    const flat = [], spd = [];
-    for (let i = 0; i < N; i++) {
-      // 重力
-      vel[i][1] -= 9.8 * DT;
-      pos[i][0] += vel[i][0] * DT;
-      pos[i][1] += vel[i][1] * DT;
-      pos[i][2] += vel[i][2] * DT;
-      // 床・壁反射
-      const r = 0.25;
-      if(pos[i][1]<0){pos[i][1]=0;vel[i][1]*=-r;}
-      if(pos[i][0]<-1.5){pos[i][0]=-1.5;vel[i][0]*=-r;}
-      if(pos[i][0]> 1.5){pos[i][0]= 1.5;vel[i][0]*=-r;}
-      if(pos[i][2]<-1.5){pos[i][2]=-1.5;vel[i][2]*=-r;}
-      if(pos[i][2]> 1.5){pos[i][2]= 1.5;vel[i][2]*=-r;}
-      flat.push(+pos[i][0].toFixed(4), +pos[i][1].toFixed(4), +pos[i][2].toFixed(4));
-      spd.push(+(Math.hypot(...vel[i])).toFixed(4));
+    const flat = new Float32Array(n * 3), spd = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const p = pos[i], v = vel[i];
+      v[1] -= g * DT;
+      p[0] += v[0] * DT; p[1] += v[1] * DT; p[2] += v[2] * DT;
+      if (p[1] < 0)    { p[1] = 0;    v[1] *= -restitution; }
+      if (p[0] < -1.5) { p[0] = -1.5; v[0] *= -restitution; }
+      if (p[0] > 1.5)  { p[0] = 1.5;  v[0] *= -restitution; }
+      if (p[2] < -1.5) { p[2] = -1.5; v[2] *= -restitution; }
+      if (p[2] > 1.5)  { p[2] = 1.5;  v[2] *= -restitution; }
+      flat[i * 3] = p[0]; flat[i * 3 + 1] = p[1]; flat[i * 3 + 2] = p[2];
+      spd[i] = Math.hypot(v[0], v[1], v[2]);
     }
     frames.push(flat); speeds.push(spd);
   }
   return {
-    metadata: { preset:'demo', description:'ブラウザ内デモ（water_drop）',
-                frameCount: FRAMES, particleCount: N, fps: 40,
-                bounds: { min:[-1.5,0,-1.5], max:[1.5,3,1.5] } },
-    frames, speeds
+    metadata: { preset: 'demo', method: 'DEMO', description: 'ブラウザ内デモ(重力と壁での反発のみ)',
+                frameCount: FRAMES, particleCount: n, fps: 40, bounds: { min: [-1.5, 0, -1.5], max: [1.5, 3, 1.5] } },
+    frames, speeds,
   };
 }
 
 // ══════════════════════════════════════════════
-//  Boot
+//  UI
 // ══════════════════════════════════════════════
-const viewer = new FluidViewer(document.getElementById('canvas'));
+const viewer = new FluidViewer($('canvas'));
 
-// ── load demo on start ─────────────────────
-viewer.loadJSON(generateDemo());
-viewer.setBackground('dark');
+const ui = {
+  toastTimer: 0,
+  toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(this.toastTimer); this.toastTimer = setTimeout(() => t.classList.remove('show'), 6000);
+  },
 
-// ── file open (共通ロード処理: .json / .json.gz 両対応) ──
-function isGzipFile(file) {
-  return file.name.endsWith('.json.gz') || file.name.endsWith('.gz');
+  refresh() {
+    const v = viewer, real = v.realDatasets;
+    document.querySelectorAll('#seg-method button').forEach(b => {
+      const ds = v.datasets.find(d => d.method === b.dataset.method && d.method !== 'DEMO');
+      b.disabled = !ds;
+      const on = !!ds && (v.compare || ds.id === v.activeId);
+      b.setAttribute('aria-pressed', String(on));
+      b.classList.add('has-tip');
+      b.dataset.tip = ds ? METHOD_NOTE[b.dataset.method] : 'この手法のデータは未読み込み(「JSON を開く」かドロップ)';
+    });
+    const cb = $('btn-compare');
+    cb.disabled = real.length < 2;
+    cb.setAttribute('aria-pressed', String(v.compare));
+    cb.dataset.tip = real.length < 2 ? '2 つ以上の手法のデータを読み込むと使えます' : '同じカメラ・同じ時刻で並べて再生';
+    cb.classList.toggle('has-tip', true);
+    document.querySelectorAll('#seg-color button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.cm === v.colorMode)));
+    document.querySelectorAll('#seg-bg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.bg === v.bg)));
+    const isDemo = v.active && v.active.method === 'DEMO' && !v.compare;
+    $('demo-params').disabled = !isDemo;
+    $('demo-hint').style.display = isDemo ? 'none' : '';
+    $('progress').max = Math.max(0, (v.master ? v.master.n : 1) - 1);
+    this.updatePlay(); this.updateLegend(); this.updateStat();
+    this.placeOverlays(v.layout());
+  },
+
+  updatePlay() {
+    $('ic-play').innerHTML = `<use href="#i-${viewer.playing ? 'pause' : 'play'}"/>`;
+    $('btn-play').setAttribute('aria-label', viewer.playing ? '一時停止' : '再生');
+  },
+
+  updateStat() {
+    const v = viewer, m = v.master;
+    if (!m) { $('stat').textContent = 'データなし(JSON を開くか、ドロップ)'; return; }
+    const idx = v.frameOf(m);
+    $('progress').value = idx;
+    if (v.compare) {
+      $('stat').textContent = `フレーム ${idx}/${m.n - 1} · 時刻 ${v.time.toFixed(2)} s · 比較 ${v.visible.length} 手法`;
+    } else {
+      const view = v.views.get(m.id), n = view && view.n != null ? view.n : m.maxN;
+      $('stat').textContent = `フレーム ${idx}/${m.n - 1} · 粒子 ${fmtInt(n)} · ${m.fps} fps`;
+    }
+  },
+
+  updateLegend() {
+    const v = viewer, vis = v.visible, u = v.uniforms, cm = COLOR_MODES[v.colorMode];
+    const lg = $('legend');
+    if (!vis.length) { lg.style.display = 'none'; return; }
+    lg.style.display = '';
+    const isSpeed = cm.qty === 'speed';
+    $('lg-title').textContent = `${cm.label}: ${isSpeed ? '速さ [m/s]' : '高さ y [m]'}`;
+    $('lg-min').textContent = fmtNum(isSpeed ? u.uSpeedMin.value : u.uYMin.value);
+    $('lg-max').textContent = fmtNum(isSpeed ? u.uSpeedMax.value : u.uYMax.value);
+    const notes = [];
+    if (isSpeed && vis.some(d => d.derivedSpeed)) notes.push('速さは位置差から算出');
+    if (v.compare) notes.push('全ビュー共通の範囲');
+    $('lg-sub').textContent = notes.join(' · ');
+    const c = $('lg-bar'), g = c.getContext('2d'), W = c.width;
+    for (let x = 0; x < W; x++) {
+      const col = PALETTES[v.colorMode](x / (W - 1));
+      g.fillStyle = `rgb(${col.map(f => Math.round(f * 255)).join(',')})`;
+      g.fillRect(x, 0, 1, c.height);
+    }
+  },
+
+  /** 凡例とラベルをコンテンツ領域(= 3D ビュー)の右下・各ビューの左上に置く。 */
+  placeOverlays(cells) {
+    const lg = $('legend');
+    if (cells.length) {
+      const r = viewer.contentRect();
+      lg.style.left = Math.max(12, r.x + r.w - 190 - 8) + 'px';
+      lg.style.top = Math.max(60, r.y + r.h - lg.offsetHeight - 8) + 'px';
+    }
+    const box = $('labels'); box.innerHTML = '';
+    if (viewer.compare) cells.forEach(c => {
+      const d = document.createElement('div');
+      d.className = 'vlabel num';
+      const view = viewer.views.get(c.ds.id);
+      const capped = view && view.n > COMPARE_MAX_PER_VIEW ? ` · 先頭 ${fmtInt(COMPARE_MAX_PER_VIEW)} 個のみ描画` : '';
+      const head = document.createElement('div');
+      head.textContent = `${METHOD_LABEL[c.ds.method] || c.ds.method} · ${fmtInt(c.ds.maxN)} 粒子${capped}`;
+      const note = document.createElement('div');
+      note.className = 'note'; note.textContent = METHOD_NOTE[c.ds.method] || '';
+      d.append(head, note);
+      d.style.left = (c.x + 6) + 'px'; d.style.top = (c.y + 6) + 'px';
+      box.appendChild(d);
+    });
+  },
+};
+window.fluidViewer = viewer;       // デバッグ・検証用
+
+// ── デモ(パラメータ即時反映) ────────────────
+let demoTimer = 0;
+function demoParams() {
+  return { g: +$('sl-gravity').value, restitution: +$('sl-rest').value, n: +$('sl-count').value };
+}
+function showDemo(keepTime = false) {
+  const ds = prepareDataset(generateDemo(demoParams()), 'デモ');
+  viewer.addDataset(ds, { keepTime });
+}
+function scheduleDemo() {
+  const a = viewer.active;
+  if (!a || a.method !== 'DEMO' || viewer.compare) return;
+  clearTimeout(demoTimer);
+  demoTimer = setTimeout(() => showDemo(true), 120);
 }
 
-async function loadFluidFile(file) {
+// ── ファイル読み込み(.json / .json.gz、複数可) ──
+const isGzipFile = f => f.name.endsWith('.json.gz') || f.name.endsWith('.gz');
+
+async function readJson(file) {
   if (isGzipFile(file)) {
-    if (typeof DecompressionStream === 'undefined') {
-      alert('このブラウザは .json.gz の解凍（DecompressionStream API）に対応していません。\n' +
-            '最新の Chrome / Edge / Firefox を使うか、非圧縮の .json ファイルを読み込んでください。');
-      return;
-    }
-    try {
-      const ds = new DecompressionStream('gzip');
-      const decompressedStream = file.stream().pipeThrough(ds);
-      const text = await new Response(decompressedStream).text();
-      viewer.loadJSON(JSON.parse(text));
-    } catch (err) {
-      console.error('gzip 解凍に失敗しました:', err);
-      alert('gzip ファイルの解凍に失敗しました。ファイルが破損しているか、形式が正しくない可能性があります。');
-    }
-    return;
+    if (typeof DecompressionStream === 'undefined')
+      throw new Error('このブラウザは .json.gz の解凍(DecompressionStream)に対応していません。非圧縮の .json を使ってください');
+    const stream = file.stream().pipeThrough(new DecompressionStream('gzip'));
+    return JSON.parse(await new Response(stream).text());
   }
-
-  if (!file.name.endsWith('.json')) return;
-  const reader = new FileReader();
-  reader.onload = ev => viewer.loadJSON(JSON.parse(ev.target.result));
-  reader.readAsText(file);
+  if (!file.name.endsWith('.json')) throw new Error('.json か .json.gz を選んでください');
+  return JSON.parse(await file.text());
 }
 
-document.getElementById('btn-load-file').addEventListener('click', () => {
-  document.getElementById('file-input').click();
-});
-document.getElementById('file-input').addEventListener('change', e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  loadFluidFile(file);
-});
+async function loadFiles(files) {
+  const errors = [];
+  for (const file of files) {
+    try { viewer.addDataset(prepareDataset(await readJson(file), file.name)); }
+    catch (e) { errors.push(`${file.name}: ${e.message}`); }
+  }
+  if (errors.length) ui.toast('読み込めませんでした — ' + errors.join(' / '));
+  else if (files.length && viewer.realDatasets.length === 1) ui.toast('別の手法の JSON も読み込むと「比較」で並べられます');
+}
 
-// ── demo button ────────────────────────────
-document.getElementById('btn-demo').addEventListener('click', () => {
-  viewer.loadJSON(generateDemo());
+// ── イベント ──────────────────────────────────
+$('btn-load-file').addEventListener('click', () => $('file-input').click());
+$('file-input').addEventListener('change', async e => { await loadFiles([...e.target.files]); e.target.value = ''; });
+$('btn-demo').addEventListener('click', () => { viewer.compare = false; showDemo(false); });
+$('btn-clear').addEventListener('click', () => { viewer.clear(); showDemo(false); });
+$('btn-compare').addEventListener('click', () => viewer.setCompare(!viewer.compare));
+$('btn-panel').addEventListener('click', () => {
+  const hidden = $('panel').classList.toggle('hidden');
+  $('btn-panel').setAttribute('aria-pressed', String(!hidden));
+  viewer._layoutKey = '';
 });
+document.querySelectorAll('#seg-method button').forEach(b => b.addEventListener('click', () => viewer.selectMethod(b.dataset.method)));
+document.querySelectorAll('#seg-color button').forEach(b => b.addEventListener('click', () => viewer.setColorMode(+b.dataset.cm)));
+document.querySelectorAll('#seg-bg button').forEach(b => b.addEventListener('click', () => viewer.setBackground(b.dataset.bg)));
+$('sw-mode').addEventListener('change', e => viewer.setMode(e.target.checked ? 'mesh' : 'particle'));
 
-// ── play / timeline ────────────────────────
-document.getElementById('btn-play').addEventListener('click', () => viewer.togglePlay());
-document.getElementById('progress').addEventListener('input', e => {
-  viewer.playing = false;
-  document.getElementById('btn-play').textContent = '▶';
-  viewer.seekTo(e.target.value);
-});
+$('btn-play').addEventListener('click', () => viewer.setPlaying(!viewer.playing));
+$('progress').addEventListener('input', e => { viewer.setPlaying(false); viewer.seekFrame(+e.target.value); });
+$('sel-speed').addEventListener('change', e => { viewer.playbackSpeed = +e.target.value; });
+$('sw-loop').addEventListener('change', e => { viewer.loop = e.target.checked; });
 
-// ── display mode ───────────────────────────
-document.getElementById('btn-mode-particle').addEventListener('click', () => viewer.setMode('particle'));
-document.getElementById('btn-mode-mesh').addEventListener('click',     () => viewer.setMode('mesh'));
+function bindSlider(id, labelId, fmt, apply) {
+  $(id).addEventListener('input', e => { $(labelId).textContent = fmt(+e.target.value); apply(+e.target.value); });
+}
+bindSlider('sl-size', 'lbl-size', v => v.toFixed(1), v => { viewer.uniforms.uSize.value = v; });
+bindSlider('sl-opacity', 'lbl-opacity', v => v.toFixed(2), v => { viewer.uniforms.uOpacity.value = v; });
+bindSlider('sl-gravity', 'lbl-gravity', v => v.toFixed(1), scheduleDemo);
+bindSlider('sl-rest', 'lbl-rest', v => v.toFixed(2), scheduleDemo);
+bindSlider('sl-count', 'lbl-count', v => fmtInt(v), scheduleDemo);
 
-// ── color map ──────────────────────────────
-['depth','speed','heat','ocean'].forEach((name, i) => {
-  document.getElementById(`cm-${name}`).addEventListener('click', () => viewer.setColorMode(i));
-});
-
-// ── sliders ────────────────────────────────
-document.getElementById('sl-size').addEventListener('input', e => {
-  viewer.uniforms.uSize.value = +e.target.value;
-  document.getElementById('lbl-size').textContent = (+e.target.value).toFixed(1);
-});
-document.getElementById('sl-opacity').addEventListener('input', e => {
-  viewer.uniforms.uOpacity.value = +e.target.value;
-  document.getElementById('lbl-opacity').textContent = (+e.target.value).toFixed(2);
-});
-document.getElementById('sl-speed').addEventListener('input', e => {
-  viewer.playbackSpeed = +e.target.value;
-  document.getElementById('lbl-speed').textContent = (+e.target.value).toFixed(1) + '×';
-});
-
-// ── background ─────────────────────────────
-['dark','blue','white'].forEach(style => {
-  document.getElementById(`bg-${style}`).addEventListener('click', () => viewer.setBackground(style));
-});
-
-// ── drag & drop ────────────────────────────
-const overlay = document.getElementById('drop-overlay');
+// ── drag & drop(複数ファイル可) ─────────────
+const overlay = $('drop-overlay');
 document.body.addEventListener('dragover', e => { e.preventDefault(); overlay.classList.add('active'); });
-document.body.addEventListener('dragleave', () => overlay.classList.remove('active'));
-document.body.addEventListener('drop', e => {
+document.body.addEventListener('dragleave', e => { if (e.target === overlay || !e.relatedTarget) overlay.classList.remove('active'); });
+document.body.addEventListener('drop', async e => {
   e.preventDefault(); overlay.classList.remove('active');
-  const file = e.dataTransfer.files[0];
-  if (!file || !(file.name.endsWith('.json') || isGzipFile(file))) return;
-  loadFluidFile(file);
+  await loadFiles([...e.dataTransfer.files]);
 });
+
+// ── 起動 ──────────────────────────────────────
+viewer.setBackground('dark');
+showDemo(false);
 </script>
 </body>
 </html>

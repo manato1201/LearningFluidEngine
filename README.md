@@ -134,6 +134,18 @@ python infer_v2.py --checkpoint ./checkpoints_v3/best.pt --frames 120
 
 ---
 
+## 2026-10 追加機能(IMPROVEMENT_PLAN_2026-10.md / IMPROVEMENT_DESIGN_2026-10.md)
+
+| 項目 | 内容 | 使い方・場所 |
+|---|---|---|
+| N1 カールノイズ | 発散しない速度場の擬似流体(近似) | `python FluidKit/tools/gen_curl.py` / `solver/curl_noise.py` |
+| N2/N3 波紋・コースティクス | 高さ場(波動方程式)と床の光の集まり。時間刻みを大きくしても自動分割で発散しない | `FluidKit/viewer/ripple.html` |
+| N4/N5 比較 Atlas | 同じ初期条件を SPH / FLIP / 格子法に与え、同じ定義の指標で比較(`--export-viewer` で viewer 用 JSON も出力) | `python FluidKit/tools/compare_solvers.py --output FluidKit/docs/COMPARE_ATLAS.md` |
+| U1〜U3 ビューア刷新 | SVG アイコン、手法切替、凡例(実データの範囲)、下部タイムライン、比較モード(複数 JSON をドロップ)、「近似」注記の固定 | `FluidKit/viewer/index.html` |
+| N6 メモ | ナビエ–ストークス問題の話題の扱い(出典・争点あり) | `FluidKit/docs/NOTE_NAVIER_STOKES.md` |
+
+提案(未実装)の項目(T1〜T14 / X15 / Y1・Y4・Y7・Y9 など)は設計書に「提案」として残しており、実装していない。
+
 ## テスト
 
 ```bash
@@ -142,7 +154,7 @@ pytest FluidKit/tests/ -v
 ```
 
 運動量保存・境界貫通なし・再現性ハッシュ一致・JSON/NPZ ラウンドトリップを検証する
-22 テストが含まれる（`.github/workflows/test.yml` で push / PR ごとに自動実行）。
+35 テスト(Python 34 + Node 1 件で JS の 9 ケース)が含まれる（`.github/workflows/test.yml` で push / PR ごとに自動実行）。
 
 ---
 

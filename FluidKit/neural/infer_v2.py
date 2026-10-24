@@ -182,7 +182,8 @@ def main():
     bounds = preset["bounds"]
     out_meta = {
         "preset":        f"neural_v2_{args.preset}",
-        "description":   f"Neural Fluid v2 (NeuralFluidV2) — {args.preset}",
+        "method":        "GNN",
+        "description":  f"Neural Fluid v2 (NeuralFluidV2) — {args.preset}",
         "frameCount":    args.frames,
         "particleCount": n_particles,
         "fps":           30,

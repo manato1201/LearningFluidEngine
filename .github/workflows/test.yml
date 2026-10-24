@@ -24,6 +24,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      # viewer/js/heightfield.js の Node テスト (tests/test_heightfield_js.py が `node --test` を呼ぶ)
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

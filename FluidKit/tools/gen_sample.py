@@ -244,6 +244,7 @@ def run(preset_name: str, frames: int, dt: float, output: Path, seed: int, use_g
     bounds = preset["bounds"]
     meta = {
         "preset": preset_name,
+        "method": "SPH",
         "description": preset["description"],
         "frameCount": frames,
         "particleCount": preset["particle_count"],

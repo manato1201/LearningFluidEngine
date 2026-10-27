@@ -154,7 +154,7 @@ pytest FluidKit/tests/ -v
 ```
 
 運動量保存・境界貫通なし・再現性ハッシュ一致・JSON/NPZ ラウンドトリップを検証する
-35 テスト(Python 34 + Node 1 件で JS の 9 ケース)が含まれる（`.github/workflows/test.yml` で push / PR ごとに自動実行）。
+35 テスト(うち 1 件は Node で JS の 9 ケースを実行)が含まれる（`.github/workflows/test.yml` で push / PR ごとに自動実行）。
 
 ---
 

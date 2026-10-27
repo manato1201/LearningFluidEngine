@@ -34,7 +34,6 @@ import numpy as np
 
 _FLUIDKIT = Path(__file__).parent.parent
 sys.path.insert(0, str(_FLUIDKIT))
-sys.path.insert(0, str(_FLUIDKIT / "solver"))
 from solver import StableFluids2D, SPHSolver, Particle, FLIPSolver   # noqa: E402
 from solver.curl_noise import CurlNoise2D, divergence_residual     # noqa: E402
 

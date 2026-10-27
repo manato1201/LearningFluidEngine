@@ -165,8 +165,8 @@
   }
 
   function drawFloor(c) {
-    if (!fimg || fimg.width !== c.res) fimg = fctx.createImageData(c.res, c.res);
-    if (flr.width !== c.res) { flr.width = c.res; flr.height = c.res; fimg = fctx.createImageData(c.res, c.res); }
+    if (flr.width !== c.res) { flr.width = c.res; flr.height = c.res; fimg = null; }
+    if (!fimg) fimg = fctx.createImageData(c.res, c.res);
     for (let k = 0; k < c.floor.length; k++) {
       const col = floorColor(c.floor[k], state.gain), o = k * 4;
       fimg.data[o] = col[0]; fimg.data[o + 1] = col[1]; fimg.data[o + 2] = col[2]; fimg.data[o + 3] = 255;
@@ -195,11 +195,8 @@
     $('st-cmax').textContent = c.max.toFixed(2);
   }
 
-  let last = null;
-  function frame(ts) {
+  function frame() {
     requestAnimationFrame(frame);
-    const real = last === null ? 0 : Math.min(0.1, (ts - last) / 1000);
-    last = ts;
     if (state.playing) {
       hf.step(state.dtFrame);
       if (state.rain) {
@@ -224,6 +221,7 @@
   surf.addEventListener('pointerdown', e => { dragging = true; surf.setPointerCapture(e.pointerId); const [x, y] = pointerToWorld(e); hf.disturb(x, y, 0.1, 0.08); });
   surf.addEventListener('pointermove', e => { if (!dragging) return; const [x, y] = pointerToWorld(e); hf.disturb(x, y, 0.08, 0.03); });
   surf.addEventListener('pointerup', () => { dragging = false; });
+  surf.addEventListener('pointercancel', () => { dragging = false; });
   surf.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hf.disturb(SIZE / 2, SIZE / 2, 0.12, 0.1); } });
 
   function setPlaying(p) {

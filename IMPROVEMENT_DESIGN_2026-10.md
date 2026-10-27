@@ -113,3 +113,34 @@ SPH・FLIP・格子法(Stam)・GNN を比べる学習用エンジン。論文の
 | Y7 inkwash(元: johnowhitaker) | 水を「描く」見せ方: 1 枚の HTML・依存なしで流体シミュレーションを描く inkwash(MIT)の構成を、軽い 2D の見せ方の参考にする | Viewer の軽量版 | コードを読んでから。流用時は MIT の表記 |
 | Y4 xenobiota(概念) | メタボールの距離場(`smin` の合成)の表示モード。粒子の密度を、滴として滑らかに見せる | Viewer の表示モード | **xenobiota はライセンス記載なし。コードは使わず、考え方だけ** |
 | Y9 skills.sh | `fluidsim`(k-dense-ai、MIT)で FluidSim(Python の CFD)の設定・検証をし、自作ソルバーの**基準解**にする | テスト・検証 | 導入前に SKILL.md を読む(読んだ範囲: 安全確認つきで計画・解析する内容) |
+
+
+## Cloudflare 活用の追補(2026-10-25)(C6)
+全体は [CLOUDFLARE_MIGRATION_PLAN_2026-10-25.md](../CLOUDFLARE_MIGRATION_PLAN_2026-10-25.md)。**提案(未実装)**。
+
+- `FluidKit/wasm` を静的アセットで公開し、ポートフォリオに貼れる URL にする。WASM のスレッドを使う場合は `_headers` で COOP/COEP を付ける(スレッド利用の有無は未確認)。
+
+
+## 外部リソースの追補 第3弾(2026-10-27)(Z8・Z9・D)
+全体は [EXTERNAL_RESOURCES_2026-10-27.md](../EXTERNAL_RESOURCES_2026-10-27.md)。**提案(未実装)**。
+
+- 流体を ASCII/ディザで描く表示モード(D1・D2)。WASM デモ(Cloudflare 計画 C6)の見せ場にする。
+- Z9(VRCFluid)・Z8(WebGPU サンドボックス)は技法の参考のみ。ハッシュグリッドで近傍を探す構成を、読んで学ぶ。コードや素材は取り込まない(Z9 は BOOTH の商品、Z8 はライセンスの記載なし)。
+
+
+---
+
+## 追補: ASCII モチーフ(2026-10-27・提案/未実装)
+
+元: [ASCII_MOTIF_MAP_2026-10-27.md](../ASCII_MOTIF_MAP_2026-10-27.md)(全体の割り当てと実装方式)。上流は [stackedlol/ascii-sharks](https://github.com/stackedlol/ascii-sharks)(MIT)。
+
+| 項目 | 内容 |
+|---|---|
+| モチーフ | 海洋(魚群・サメ・クラゲ) |
+| 選んだ理由 | 流体=水。上流 ascii-sharks がそのまま使える |
+| 使う色 | ビューアの深度色に合わせる(新色は足さない)(既存トークンのみ・新色は足さない) |
+| 出す場所 | ビューアの空状態・読込中(動きは空・待機の状態だけ=P8) |
+| 実装系統 | A. Flock(上流を流用) |
+
+- 本文・操作部品には出さない。`prefers-reduced-motion` では静止画1枚にする。
+- 未確認: 上流の動作・描画負荷(`npm install`/build は未実行)。

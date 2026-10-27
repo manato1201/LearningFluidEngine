@@ -892,7 +892,7 @@ python FluidKit/setup/download_build.py --force</code></pre>
         <tr><td><code>solver/flip_solver.py</code></td><td>FLIP ハイブリッド</td><td>np.add.at scatter, 47x 高速化</td></tr>
         <tr><td><code>solver/reproducibility.py</code></td><td>再現性保証</td><td>SHA-256 状態ハッシュ, NPZ 保存</td></tr>
         <tr><td><code>solver/runner.py</code></td><td>サンドボックス実行</td><td>クロスプラットフォーム タイムアウト</td></tr>
-        <tr><td><code>tests/</code></td><td>pytest テストスイート (NEW)</td><td>momentum保存, 境界貫通なし, 再現性ハッシュ一致, I/Oラウンドトリップ (22件)</td></tr>
+        <tr><td><code>tests/</code></td><td>pytest テストスイート (NEW)</td><td>momentum保存, 境界貫通なし, 再現性ハッシュ一致, I/Oラウンドトリップ・カールノイズ・比較指標・高さ場 (35件)</td></tr>
         <tr><td><code>setup/download_build.py</code></td><td>WASM 自動取得</td><td>GitHub Releases から urllib のみで取得</td></tr>
         <tr><td><code>.github/workflows/release.yml</code></td><td>CI/CD</td><td>Emscripten ビルド + Release 自動配布 (タグ push 時)</td></tr>
         <tr><td><code>.github/workflows/test.yml</code></td><td>CI テスト自動実行 (NEW)</td><td>push/PR ごとに pytest 実行</td></tr>

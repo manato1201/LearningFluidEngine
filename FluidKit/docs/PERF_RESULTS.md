@@ -129,6 +129,23 @@ GPUメモリ（N=4000, B=8）: 3450 MB → 2076 MB（**1.66x** 削減）。
 
 ## 統合検証
 
-- `pytest FluidKit/tests/ -v` — 22 passed
+- `pytest FluidKit/tests/ -v` — 22 passed(Phase 1〜6 当時。2026-10 の追加後は 35 passed)
 - gen_sample.py 全プリセット（water_drop/smoke/splash）→ Three.js Viewer 互換のJSON生成を確認
 - collect_data.py → train_v2.py → infer_v2.py のフルパイプラインをスモークテストで確認
+
+---
+
+## 2026-10 追加分の実測(ビューア・比較 Atlas)
+
+計測日: 2026-10-24〜31 / RTX 3070 / Chrome(ヘッドレス)
+
+| 項目 | 結果 | 条件・注意 |
+|---|---|---|
+| ビューア 10 万粒子の描画 | 約 59 fps(rAF 上限 60) | 実 GPU(ANGLE D3D11)。ソフトウェア描画(SwiftShader)では 8〜28 fps — **実機の値として書かない** |
+| 10 万粒子のシーク(JS) | 約 0.7 ms | `setFrame` は `Float32Array.set` 1 回 |
+| 10 万粒子のデモ再生成 | 約 0.5 s | フレーム数は 20 に絞る(メモリ対策) |
+| 比較 Atlas の ms/step | SPH 25〜57 ms、FLIP 0.5〜1.4 ms、Stam 1.2〜2.9 ms | **実行ごとに 2 倍以上ずれた**(他の処理の負荷)。手法間の相対的な大小だけを読む |
+| カールノイズ vs Stam | 損益分岐 約 2,300 粒子 | カールノイズは粒子数×波の数でコストが決まる。常に軽いわけではない |
+| テスト | pytest 35 件 + Node 10 ケース | `heightfield.test.js` は pytest から 1 件として呼ばれる |
+
+> 教訓: 計測値は条件を併記し、再計測で大きくずれる値は**絶対値を引用しない**。

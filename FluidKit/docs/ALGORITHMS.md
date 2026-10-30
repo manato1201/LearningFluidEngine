@@ -11,6 +11,7 @@
 7. [アルゴリズム選定の理由](#7-アルゴリズム選定の理由)
 8. [パイプライン全体図](#8-パイプライン全体図)
 9. [最適化・リファクタリング実施記録 (IMPROVEMENT_PLAN.md)](#9-最適化リファクタリング実施記録) ★NEW
+10. [2026-10 拡張 — カールノイズ・高さ場・比較 Atlas・ビューア](#10-2026-10-拡張) ★NEW
 
 ---
 
@@ -668,3 +669,73 @@ flowchart TD
     F -->|Yes| G["採用・コミット"]
     F -->|No| E
 ```
+
+
+---
+
+## 10. 2026-10 拡張
+
+`IMPROVEMENT_PLAN_2026-10.md` / `IMPROVEMENT_DESIGN_2026-10.md` に基づく追加。講義形式の解説は [LEARNING_GUIDE.md](LEARNING_GUIDE.md)、
+実測は [COMPARE_ATLAS.md](COMPARE_ATLAS.md)。
+
+![システム構成図](diagrams/architecture.svg)
+
+### 10-1. 追加した手法と、その位置づけ
+
+```mermaid
+flowchart LR
+    subgraph 物理を解く
+        SPH["SPH<br/>粒子・陽解法"]
+        FLIP["FLIP<br/>粒子+格子・圧力投影"]
+        GRID["格子法 (Stam)<br/>密度場・圧力投影"]
+    end
+    subgraph 物理を解かない近似
+        CURL["カールノイズ<br/>発散ゼロの擬似流体"]
+        GNN["GNN<br/>学習で次フレームを予測"]
+        HF["高さ場<br/>波動方程式 + 屈折の近似"]
+    end
+    SPH & FLIP & GRID & CURL & GNN --> JSON["viewer JSON<br/>(metadata.method で識別)"]
+    JSON --> VIEW["viewer/index.html<br/>単独 / 比較モード"]
+    HF --> RIPPLE["viewer/ripple.html"]
+```
+
+| 手法 | 式の核 | 検証(テスト) | 限界 |
+|---|---|---|---|
+| カールノイズ | $\mathbf{u}=\nabla\times\mathbf{A}$、2D は $(u,v)=(\psi_y,-\psi_x)$ | 有限差分の発散が $O(h^2)$ で 0 に収束 | 外力・壁に反応しない。コストは粒子数×波の数 |
+| 高さ場 | $h_{tt}=c^2\nabla^2h-\gamma h_t$、$\Delta t\le\Delta x/(c\sqrt2)$ | 刻み 1/240〜1 s で有界、限界の 3 倍で発散、エネルギー | 線形の波のみ。小さい傾きの屈折近似 |
+| コースティクス | 着地点 $\mathbf{x}+D(1-\eta)\nabla h$ に光線を撒く(山は凸レンズ=集光) | 平面で一様(平均≈1)、波で集光、単独の山は明るく谷は暗い | 多重屈折・波長依存なし |
+
+### 10-2. 比較 Atlas の指標(全手法で同じ定義)
+
+| 指標 | 定義 | 粒子法 / 格子法での計算 |
+|---|---|---|
+| 質量比 | $M(t)/M_0$ | 粒子数一定で 1 / $\sum\rho\,\Delta x^2$ |
+| 比運動エネルギー | $\mathrm{KE}/M_0=\sum\tfrac12 m\lvert\mathbf{v}\rvert^2/M_0$ | 粒子の質量加重 / 密度加重(どちらも**初期質量 $M_0$** で割る) |
+| 比運動量(y) | $P_y/M_0$ | 同上 |
+| 重心の高さ | $\sum m y/\sum m$ | 理論値は自由落下 $y_0-\tfrac12gt^2$ |
+
+### 10-3. ビューアの時間同期(比較モード)
+
+```mermaid
+sequenceDiagram
+    participant R as requestAnimationFrame
+    participant V as FluidViewer
+    participant A as View(SPH, 37f@60fps)
+    participant B as View(GNN, 120f@30fps)
+    R->>V: ts
+    V->>V: time += Δt × 再生速度 (最長データ = master でループ)
+    V->>A: frame = floor(time × 60)
+    V->>B: frame = floor(time × 30)
+    V->>V: viewport/scissor で領域分割、同じカメラで render
+    V->>V: 凡例 = 全ビューの実データ最小・最大
+```
+
+### 10-4. 検証の方法
+
+- Python: `pytest FluidKit/tests`(35 件。物性・再現性・I/O・カールノイズ・比較指標・Node の高さ場テストを呼ぶ 1 件)。
+- JS: `node --test FluidKit/viewer/js/heightfield.test.js`。
+- ブラウザ: `node FluidKit/tools/verify_viewer.mjs`(ヘッドレス Chrome + CDP。同期・シーク・凡例範囲・コンソールエラー)。
+
+### 10-5. 手法の選び方
+
+![手法の選び方](diagrams/method-selection.svg)

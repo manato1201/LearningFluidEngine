@@ -120,6 +120,17 @@ python train_v2.py --ckpt ./checkpoints_v3 --epochs 120
 python infer_v2.py --checkpoint ./checkpoints_v3/best.pt --frames 120
 ```
 
+## 学習ガイドと構成図
+
+![システム構成図](docs/diagrams/architecture.svg)
+
+| 目的 | 読むもの |
+|---|---|
+| 基礎から保守・拡張まで通しで学ぶ(講義形式) | [docs/LEARNING_GUIDE.md](docs/LEARNING_GUIDE.md) |
+| 図(構成図・データの流れ・ビューア内部・手法の選び方・SPH 1 ステップ) | `docs/diagrams/*.svg`(`python docs/diagrams/build_diagrams.py` で再生成) |
+| 3 手法の比較結果 | [docs/COMPARE_ATLAS.md](docs/COMPARE_ATLAS.md) |
+| ビューアの自動検証(ヘッドレス Chrome) | `node tools/verify_viewer.mjs` |
+
 ## 2026-10 追加機能(IMPROVEMENT_PLAN_2026-10.md / IMPROVEMENT_DESIGN_2026-10.md)
 
 | 項目 | 内容 | 使い方・場所 |
@@ -141,7 +152,7 @@ pytest tests/ -v
 ```
 
 運動量保存・境界貫通なし・再現性ハッシュ一致・JSON/NPZ ラウンドトリップを検証する
-35 テスト(うち 1 件は Node で JS の 9 ケースを実行)が含まれる（`.github/workflows/test.yml` で push / PR ごとに自動実行）。
+35 テスト(うち 1 件は Node で JS の 10 ケースを実行)が含まれる（`.github/workflows/test.yml` で push / PR ごとに自動実行）。
 
 ## Neural Fluid モデル比較
 

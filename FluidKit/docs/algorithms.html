@@ -284,6 +284,11 @@
     <li><a href="#blending" class="sub">加算ブレンディング</a></li>
     <li><a href="#anim" class="sub">アニメーション制御</a></li>
 
+    <li class="cat">擬似流体・比較 (2026-10)</li>
+    <li><a href="#curl-noise">カールノイズ</a></li>
+    <li><a href="#ripple" class="sub">波紋の高さ場とコースティクス</a></li>
+    <li><a href="#atlas-metrics" class="sub">比較 Atlas の指標定義</a></li>
+
     <li class="cat">まとめ</li>
     <li><a href="#rationale">選定理由</a></li>
   </ul>
@@ -389,6 +394,12 @@
     <div class="math-block">
       $$A(\mathbf{r}) = \sum_j m_j \frac{A_j}{\rho_j} W(\mathbf{r} - \mathbf{r}_j,\, h)$$
     </div>
+    <h4>1 ステップの流れ</h4>
+    <img src="diagrams/solver-step.svg" alt="SPH 1 ステップの流れ図: 近傍探索、密度、圧力、力、積分、境界処理の順と、実装上の落とし穴" style="width:100%;max-width:100%;height:auto;border:1px solid var(--border);border-radius:12px;" />
+    <p style="font-size:12px;color:var(--muted);margin-top:6px;">
+      図: SPH の 1 ステップ（近傍探索 → 密度 → 圧力 → 力 → 時間積分）と、
+      <a href="#sph-bug" style="color:var(--accent)">実装ノート</a>で触れたブロードキャストの落とし穴の位置。
+    </p>
   </section>
 
   <!-- KERNEL -->
@@ -958,6 +969,185 @@ nn.utils.<span class="fn">clip_grad_norm_</span>(model.parameters(), <span class
 
   <hr />
 
+  <!-- ══ CURL NOISE (2026-10) ══ -->
+  <section id="curl-noise">
+    <h2>追加: カールノイズ — 発散しない擬似流体（2026-10）</h2>
+    <p>
+      ナビエ–ストークス方程式を解く代わりに、<strong>ノイズ（ポテンシャル）の回転（curl）を速度場にする</strong>手法。
+      回転の発散は恒等的にゼロなので、圧力投影をしなくても非圧縮の「流れっぽい」動きが得られる。
+      実装は <code>solver/curl_noise.py</code>（<code>CurlNoise2D</code> / <code>CurlNoise3D</code>）と
+      <code>tools/gen_curl.py</code>。参考: Bridson et al., <em>Curl-Noise for Procedural Fluid Flow</em>, SIGGRAPH 2007（考え方のみ）。
+    </p>
+
+    <h3>なぜ発散がゼロになるか</h3>
+    <p>3D ではベクトルポテンシャル $\mathbf{A}=(A_1,A_2,A_3)$ の回転を速度とする：</p>
+    <div class="math-block green">
+      $$\mathbf{u} = \nabla\times\mathbf{A},\qquad
+        \nabla\cdot(\nabla\times\mathbf{A})
+        = \partial_x(\partial_y A_3-\partial_z A_2)+\partial_y(\partial_z A_1-\partial_x A_3)+\partial_z(\partial_x A_2-\partial_y A_1) = 0$$
+    </div>
+    <p>各項は同じ 2 階偏導関数の差になり、偏微分の順序交換（$\partial_x\partial_y=\partial_y\partial_x$）で打ち消し合う。
+       2D ではスカラーの流れ関数 $\psi$ を使う：</p>
+    <div class="math-block green">
+      $$u = \frac{\partial\psi}{\partial y},\quad v = -\frac{\partial\psi}{\partial x}
+        \;\Rightarrow\; \nabla\cdot\mathbf{u} = \psi_{yx}-\psi_{xy} = 0$$
+    </div>
+
+    <h3>ノイズの作り方 — ランダム Fourier 特徴</h3>
+    <p>ポテンシャルを「ランダムな波数の正弦波の和」で作ると、勾配（したがって curl）を解析式で書ける：</p>
+    <div class="math-block">
+      $$f(\mathbf{x},t)=\sum_k a_k \sin(\mathbf{k}_k\!\cdot\!\mathbf{x}+\varphi_k+\omega_k t),\qquad
+        \nabla f=\sum_k a_k\,\mathbf{k}_k\cos(\mathbf{k}_k\!\cdot\!\mathbf{x}+\varphi_k+\omega_k t)$$
+    </div>
+    <ul style="margin:8px 0 8px 22px;font-size:13.5px;">
+      <li>波数ベクトル $\mathbf{k}_k$ は向きをランダムに選び、$|\mathbf{k}|=2\pi\cdot\text{周波数}$。オクターブごとに周波数を <code>lacunarity</code>（既定 2）倍。</li>
+      <li>振幅は $a\propto p^{o}/|\mathbf{k}|$（$p$=<code>persistence</code>, $o$=オクターブ）。速度の大きさ $\approx|\mathbf{k}|a$ が
+          オクターブごとに $p$ 倍になる。</li>
+      <li>位相 $\varphi_k$ は一様乱数、$\omega_k$ は小さな乱数で時間とともにゆっくり流れる（<code>drift</code>）。</li>
+      <li>2D は 1 つのスカラー $\psi$、3D は 3 つのスカラー $A_1,A_2,A_3$ の勾配から curl を組む。</li>
+    </ul>
+    <pre><code><span class="cm"># CurlNoise2D.velocity — ψ の勾配 (∂ψ/∂x, ∂ψ/∂y) から速度を作る</span>
+g = self._psi.grad(p, t)
+<span class="kw">return</span> self.strength * np.stack([g[:, <span class="num">1</span>], -g[:, <span class="num">0</span>]], axis=<span class="num">1</span>)   <span class="cm"># u = ∂ψ/∂y, v = -∂ψ/∂x</span>
+<span class="lang">python</span></code></pre>
+
+    <h3>発散の確認 — 有限差分で測る</h3>
+    <p>解析式では厳密にゼロでも、確認は中心差分で行うため離散化誤差が残る。刻み幅 $h$ に対して
+       $O(h^2)$ で減ることをテストで確認している（<code>divergence_residual()</code>）。</p>
+    <div class="tbl">
+      <table>
+        <tr><th>指標（<a href="COMPARE_ATLAS.md" style="color:var(--accent)">COMPARE_ATLAS.md</a> §4）</th><th>格子法 (Stam, 64×64)</th><th>カールノイズ</th></tr>
+        <tr><td>発散の最大値 / 速度勾配の rms</td><td>$1.91\times10^{-1}$ / $2.57\times10^{-1}$ = 0.74</td><td>$3.57\times10^{-5}$ / $2.10$ = $1.7\times10^{-5}$</td></tr>
+        <tr><td>1 ステップの時間</td><td>1.15 ms（格子数で決まる）</td><td>2.06 ms（4096 粒子・RK2, 粒子数 × 波の数で決まる）</td></tr>
+      </table>
+    </div>
+    <p>コストの分岐点は、その計測では約 2,282 粒子（それより少なければカールノイズが軽い）。
+       <strong>常にカールノイズが軽いわけではない。</strong></p>
+
+    <div class="box warn">
+      <strong>限界:</strong>
+      ① ナビエ–ストークスを解いていない（圧力・粘性・保存則なし）。発散がゼロでも「物理的に正しい流れ」ではない。
+      ② 重力・衝撃などの外力に<strong>反応しない</strong>。
+      ③ 壁・障害物の境界条件を持たない（<code>gen_curl.py</code> は粒子を範囲内に clip し、上に抜けた粒子を発生源に戻すだけ）。
+      ④ 粒子の移流は RK2 の数値積分なので、粒子の密度が一様に保たれる保証まではない。
+      飾りの煙や水流向け。衝突・落下の再現には SPH / FLIP / 格子法を使う。
+    </div>
+  </section>
+
+  <!-- ══ RIPPLE / CAUSTICS (2026-10) ══ -->
+  <section id="ripple">
+    <h3>波紋の高さ場とコースティクス</h3>
+    <p>
+      <code>viewer/ripple.html</code> と <code>viewer/js/heightfield.js</code>。水面を格子上の高さ $h(x,y,t)$ として、
+      減衰つきの 2D 波動方程式を解く。粒子も圧力も使わない、水面の波と床の光の集まりだけの近似。
+    </p>
+    <div class="math-block">
+      $$\frac{\partial^2 h}{\partial t^2} = c^2\nabla^2 h - \gamma\,\frac{\partial h}{\partial t}$$
+    </div>
+    <p>$c$ は波速、$\gamma$ は減衰係数。半陰的（symplectic）Euler で、速度 $v=h_t$ を先に更新してから高さを更新する：</p>
+    <div class="math-block green">
+      $$v \leftarrow v + \Delta t\left(\frac{c^2}{\Delta x^2}\,L h - \gamma v\right),\qquad
+        h \leftarrow h + \Delta t\, v$$
+      $$(Lh)_{i,j}=h_{i\pm1,j}+h_{i,j\pm1}-4h_{i,j}\quad(\text{5 点ラプラシアン}),\qquad \text{端は鏡像（Neumann）}$$
+    </div>
+
+    <h4>安定条件（CFL）— 導出のスケッチ</h4>
+    <ol style="margin:8px 0 8px 22px;font-size:13.5px;">
+      <li>5 点ラプラシアン $L/\Delta x^2$ の固有値は、正弦波モード $(k_x,k_y)$ に対して
+          $-\dfrac{4}{\Delta x^2}\left(\sin^2\dfrac{k_x\Delta x}{2}+\sin^2\dfrac{k_y\Delta x}{2}\right)$ なので、最大で $-\dfrac{8}{\Delta x^2}$。</li>
+      <li>各モードは調和振動子 $\ddot{h}=-\omega^2 h$（$\omega^2=-c^2\lambda$）になり、最大の角周波数は
+          $\omega_{\max}=c\sqrt{8}/\Delta x=2\sqrt{2}\,c/\Delta x$。</li>
+      <li>調和振動子に対する symplectic Euler は $\omega\,\Delta t\le 2$ で安定（超えると発散）。</li>
+    </ol>
+    <div class="math-block purple">
+      $$\Delta t \;\le\; \frac{2}{\omega_{\max}} \;=\; \frac{\Delta x}{c\sqrt{2}}$$
+    </div>
+    <p>
+      実装の <code>stableDt()</code> は安全率 0.9 を掛けた値を返し、<code>step(dtFrame)</code> は
+      $\lceil \Delta t_{\text{frame}} / \Delta t_{\text{stable}}\rceil$ 個のサブステップに自動分割する。
+      クラスの既定値（$n=128$, 一辺 2 m, $c=1.2$）では $\Delta x\approx0.0157$ m、$\Delta t_{\text{stable}}\approx0.0084$ s で、
+      60 fps の 1 フレーム（0.0167 s）は 2 サブステップになる。減衰項は通常この条件を緩める方向に働く（ここでは $\gamma\Delta t\ll1$）。
+    </p>
+
+    <h4>縁の吸収層（スポンジ）</h4>
+    <p>有限の格子の縁で波が跳ね返らないよう、縁から $S$ セル以内で減衰を上乗せする：</p>
+    <div class="math-block">
+      $$\gamma(e)=\gamma_0+\gamma_s\left(1-\frac{e}{S}\right)^2\quad(e<S),\qquad \gamma_s=6$$
+    </div>
+    <p>$e$ は縁からのセル数。二乗で滑らかに増やすのは、減衰が急に変わる境界で反射が出るのを避けるため。</p>
+
+    <h4>コースティクス — 屈折光線の着地点を撒く</h4>
+    <p>
+      鉛直に入射する光が、水面の傾き $\nabla h$ で屈折して深さ $D$ の床に届く位置を求める。
+      小傾き近似（$\sin\theta\approx\theta$）では、入射角 $\theta_i\approx|\nabla h|$、屈折角 $\theta_t\approx\eta\,\theta_i$
+      （$\eta=1/n_{\text{water}}\approx1/1.33$）。光線の鉛直からのずれは $\theta_i-\theta_t=(1-\eta)\theta_i$ なので、床での横ずれは
+    </p>
+    <div class="math-block green">
+      $$\Delta\mathbf{x}\;\approx\; D\,(1-\eta)\,\nabla h \qquad(\text{大きさ。向きは下の注記})$$
+    </div>
+    <p>
+      水面の各セルから 1 本ずつ光線を出し、着地点の周りの 4 つの床セルに双線形の重みで 1 を撒く（photon splat）。
+      床の格子数に合わせて正規化するので、<strong>床セルの強度 = 平均で 1 に対する光線の集まり具合</strong>
+      （一様なら 1）。床の外へ出た光線は数えないため、平均は 1 を超えない。
+    </p>
+    <pre><code>fx = (i*dx + bend*gx) / cell     <span class="cm">// bend = D(1-η)、(gx,gy) = ∇h。着地点を床の格子座標へ</span>
+floor[...] += 双線形の重み        <span class="cm">// 4 セルに撒く</span>
+floor *= (res*res) / (n*n)        <span class="cm">// 一様なら 1 に正規化</span>
+<span class="lang">javascript</span></code></pre>
+
+    <div class="box tip">
+      <strong>向きの確認(テストで固定済み):</strong> 山(頂)の斜面は $\nabla h$ が頂と逆向きなので、光は頂側へ曲がり、
+      <em>山の真下に光が集まる(凸レンズ)</em>。谷は光を散らす。<code>heightfield.test.js</code> の
+      「山は真下に光を集め、谷は散らす」が、単独の山(中央 5×5 の平均 2.39)と谷で符号を確認する。
+      以前の実装は符号が逆で、山と谷の明暗が入れ替わっていた(ランダムな波の「max &gt; 2×平均」では検出できなかった)。
+    </div>
+
+    <div class="box warn">
+      <strong>限界:</strong>
+      ① 小傾き近似で、急な波では成り立たない。② 屈折は水面 1 回だけ（多重屈折・全反射・反射光は扱わない）。
+      ③ 光線の着地は離散的で、床の解像度が高いとノイズ（光線が足りない）が出る — 床は水面の半分の解像度にしている。
+      ④ 波長依存（分散）なし。⑤ 波動方程式は線形で、砕波・水面の非線形な効果は出ない。見た目用の近似。
+    </div>
+  </section>
+
+  <!-- ══ ATLAS METRICS (2026-10) ══ -->
+  <section id="atlas-metrics">
+    <h3>比較 Atlas の指標定義</h3>
+    <p>
+      <code>tools/compare_solvers.py</code> は、同じ「落下する水塊」（単位箱 $[0,1]^2$、中心 $(0.5,\,0.75)$、半径 0.12、
+      重力 $g=9.8$、初期速度ゼロ、約 400 粒子、0.6 s）を SPH / FLIP / Stam 格子法に与え、
+      <strong>同じシミュレーション時刻</strong>で指標を比べる。結果は
+      <a href="COMPARE_ATLAS.md" style="color:var(--accent)">COMPARE_ATLAS.md</a>。
+      手法ごとに時間刻みが違う（SPH 0.001 s、FLIP / Stam 0.01 s）ので、コストは「ms / シミュレーション秒」でも並べる。
+    </p>
+    <div class="tbl">
+      <table>
+        <tr><th>指標</th><th>定義</th><th>読み方</th></tr>
+        <tr><td>質量比</td><td>$M(t)/M_0$。粒子法は粒子数一定で 1.0、格子法は $\sum \rho\,\Delta x^2$ の変化</td><td>1 から外れるほど密度が保存されていない</td></tr>
+        <tr><td>比運動エネルギー</td><td>$\mathrm{KE}/M_0=\sum \tfrac12 m|\mathbf{v}|^2 / M_0$ [m²/s²]</td><td>落下で増え、着地・粘性・数値散逸で減る</td></tr>
+        <tr><td>比運動量（y）</td><td>$P_y/M_0=\sum m\,v_y / M_0$ [m/s]</td><td>落下中は負。床で跳ね返ると 0 に近づく</td></tr>
+        <tr><td>重心の高さ</td><td>$y_{\mathrm{COM}}=\sum m\,y/\sum m$ と、自由落下 $y_0-\tfrac12 g t^2$</td><td>理論値との差が空気側の抵抗や数値粘性の目安</td></tr>
+      </table>
+    </div>
+    <p>
+      質量・エネルギー・運動量は初期総質量 $M_0$ で割った<strong>比</strong>なので、粒子の質量や格子の単位系に依存しない。
+      自由落下の理論値 $y_0-\tfrac12 g t^2$ は、水塊の下端が床に届く（重心 $\approx$ 半径 0.12）まで定義でき、以降は表で省略している。
+      SPH は 0.30 s で 0.290 m（理論 0.309 m）とよく一致し、FLIP（0.612 m）と Stam（0.442 m）は遅れる。
+    </p>
+
+    <div class="box warn">
+      <strong>限界:</strong>
+      ① 格子法の KE と $P_y$ も、粒子法と同じく<strong>初期質量 $M_0$ で割る</strong>（以前は現在の質量 $M(t)$ で割っていて定義が食い違っていた。
+      レビューで指摘され、実装を定義に合わせた）。質量比が 0.55 まで落ちる Stam では、この違いが KE を約 2 倍変える。
+      ② Stam の質量比が 1 から大きく外れる<strong>原因は未調査</strong>（圧力投影の残差・移流の補間・境界処理が候補）。バグか手法の性質かは決めていない。
+      ③ Stam は気体向けの密度場で、空気側も非圧縮として解くため水塊は自由落下せず遅れる — これは手法の違い。
+      ④ 各ソルバーは学習用の簡易実装で、この表は<strong>手法の性格の比較</strong>であり精度の優劣ではない。物理的に厳密ではない。
+      ⑤ GNN は学習済みチェックポイントが必要なため未計測。
+    </div>
+  </section>
+
+  <hr />
+
   <!-- ══ RATIONALE ══ -->
   <section id="rationale">
     <h2>⑤ アルゴリズム選定の理由</h2>
@@ -1009,8 +1199,25 @@ nn.utils.<span class="fn">clip_grad_norm_</span>(model.parameters(), <span class
           <td>Additive Blending</td>
           <td>Z ソート不要で高速。密度可視化に直感的</td>
         </tr>
+        <tr>
+          <td>擬似流体（飾り）</td>
+          <td><a href="#curl-noise" style="color:var(--accent)">カールノイズ</a></td>
+          <td>圧力投影なしで発散ゼロ。コストは粒子数 × 波の数。ただし外力・壁に反応しない</td>
+        </tr>
+        <tr>
+          <td>水面の波紋・光</td>
+          <td><a href="#ripple" style="color:var(--accent)">高さ場の波動方程式 + コースティクス</a></td>
+          <td>粒子不要で軽い。CFL 条件を満たすよう自動でサブステップ分割。小傾き・単一屈折の近似</td>
+        </tr>
       </table>
     </div>
+
+    <h3 style="margin-top:36px;">手法の選び方（フローチャート）</h3>
+    <img src="diagrams/method-selection.svg" alt="手法選択フローチャート: 水面の波紋だけか、外力や衝突に反応させたいか、自由表面があるか、といった問いから高さ場、SPH、FLIP、格子法、GNN、カールノイズを選ぶ" style="width:100%;max-width:100%;height:auto;border:1px solid var(--border);border-radius:12px;" />
+    <p style="font-size:12px;color:var(--muted);margin-top:6px;">
+      図: どの手法も近似で、物理的に厳密ではない。迷ったら比較モードで同じ条件を複数手法に与えて見比べる
+      （<a href="#atlas-metrics" style="color:var(--accent)">指標の定義</a>、<a href="COMPARE_ATLAS.md" style="color:var(--accent)">COMPARE_ATLAS.md</a>）。
+    </p>
 
     <h3 style="margin-top:36px;">実装上の教訓（2026-07 リファクタリングセッション）</h3>
     <p>

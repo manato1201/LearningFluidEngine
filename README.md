@@ -134,6 +134,17 @@ python infer_v2.py --checkpoint ./checkpoints_v3/best.pt --frames 120
 
 ---
 
+## 学習ガイドと構成図
+
+![システム構成図](FluidKit/docs/diagrams/architecture.svg)
+
+| 目的 | 読むもの |
+|---|---|
+| 基礎から保守・拡張まで通しで学ぶ(講義形式) | [FluidKit/docs/LEARNING_GUIDE.md](FluidKit/docs/LEARNING_GUIDE.md) |
+| 図(構成図・データの流れ・ビューア内部・手法の選び方・SPH 1 ステップ) | `FluidKit/docs/diagrams/*.svg`(`python FluidKit/docs/diagrams/build_diagrams.py` で再生成) |
+| 3 手法の比較結果 | [FluidKit/docs/COMPARE_ATLAS.md](FluidKit/docs/COMPARE_ATLAS.md) |
+| ビューアの自動検証(ヘッドレス Chrome) | `node FluidKit/tools/verify_viewer.mjs` |
+
 ## 2026-10 追加機能(IMPROVEMENT_PLAN_2026-10.md / IMPROVEMENT_DESIGN_2026-10.md)
 
 | 項目 | 内容 | 使い方・場所 |
@@ -154,7 +165,7 @@ pytest FluidKit/tests/ -v
 ```
 
 運動量保存・境界貫通なし・再現性ハッシュ一致・JSON/NPZ ラウンドトリップを検証する
-35 テスト(うち 1 件は Node で JS の 9 ケースを実行)が含まれる（`.github/workflows/test.yml` で push / PR ごとに自動実行）。
+35 テスト(うち 1 件は Node で JS の 10 ケースを実行)が含まれる（`.github/workflows/test.yml` で push / PR ごとに自動実行）。
 
 ---
 

@@ -246,6 +246,8 @@
     <li><a href="#overview">概要</a></li>
     <li><a href="#pipeline">パイプライン</a></li>
     <li><a href="#quickstart">クイックスタート</a></li>
+    <li><a href="#diagrams">構成図・フローチャート</a></li>
+    <li><a href="LEARNING_GUIDE.md" style="color:#38d9c0;">📖 学習ガイド (LEARNING_GUIDE) →</a></li>
 
     <li class="section-title">アルゴリズム</li>
     <li><a href="algorithms.html" style="color:#38d9c0;font-weight:600;">📐 アルゴリズム詳細解説 →</a></li>
@@ -262,6 +264,9 @@
 
     <li class="section-title">最適化ログ (2026-07)</li>
     <li><a href="#optlog">Phase 1〜6 実施記録</a></li>
+
+    <li class="section-title">追加機能 (2026-10)</li>
+    <li><a href="#update-2026-10">2026-10 追加機能</a></li>
 
     <li class="section-title">CI / CD</li>
     <li><a href="#cicd">WASM 自動ビルド & Releases</a></li>
@@ -316,6 +321,13 @@
            パーティクル / メッシュ切り替え、カラーマップ 4 種対応。</p>
       </div>
     </div>
+
+    <h3>システム構成図</h3>
+    <img src="diagrams/architecture.svg" alt="FluidKit システム構成図: 生成スクリプト、ソルバー、データ(JSON)、ブラウザ表示、テストと CI の関係" style="width:100%;max-width:100%;height:auto;border:1px solid var(--border);border-radius:12px;" />
+    <p style="font-size:12px;color:var(--muted);margin-top:6px;">
+      図: 生成スクリプト → ソルバー → JSON → ビューアという一方向の流れと、テスト・CI の位置づけ。
+      数値の流れは <a href="#diagrams" style="color:var(--accent2)">構成図・フローチャート</a> を参照。
+    </p>
   </section>
 
   <!-- PIPELINE -->
@@ -388,6 +400,33 @@ python neural/infer_v2.py --checkpoint ./neural/checkpoints_v2/best.pt</code></p
         </div>
       </li>
     </ul>
+  </section>
+
+  <!-- DIAGRAMS -->
+  <section id="diagrams">
+    <h2>構成図・フローチャート</h2>
+    <p>
+      図は <code>docs/diagrams/</code> の SVG（<code>python FluidKit/docs/diagrams/build_diagrams.py</code> で再生成）。
+      基礎から順に読みたい場合は <a href="LEARNING_GUIDE.md" style="color:var(--accent2)">LEARNING_GUIDE.md</a> を参照してください。
+    </p>
+
+    <h3>データの流れ（生成 → JSON → ビューア）</h3>
+    <img src="diagrams/dataflow.svg" alt="データフロー図: gen_sample.py などの生成スクリプトが JSON を出力し、ビューアが読み込んで表示するまでの番号付きの流れ" style="width:100%;max-width:100%;height:auto;border:1px solid var(--border);border-radius:12px;" />
+    <p style="font-size:12px;color:var(--muted);margin-top:6px;">
+      図: 番号順に追うと、どのスクリプトが何を出力し、ビューアが何を読むかが分かる。
+    </p>
+
+    <h3>どの手法を選ぶか（選択フローチャート）</h3>
+    <img src="diagrams/method-selection.svg" alt="手法選択フローチャート: 目的に応じて SPH、FLIP、格子法、GNN、カールノイズのどれを使うかを分岐で示す" style="width:100%;max-width:100%;height:auto;border:1px solid var(--border);border-radius:12px;" />
+    <p style="font-size:12px;color:var(--muted);margin-top:6px;">
+      図: 衝突・落下の再現には SPH / FLIP / 格子法、飾りの流れにはカールノイズ、など目的から手法を選ぶ。
+      各手法の実測比較は <a href="COMPARE_ATLAS.md" style="color:var(--accent2)">比較 Atlas</a> を参照。
+    </p>
+
+    <div class="box info">
+      ビューアの内部構成の図は <code>docs/diagrams/viewer-internals.svg</code>、
+      SPH 1 ステップの図は <a href="algorithms.html#sph" style="color:var(--accent2)">アルゴリズム詳細解説の SPH 節</a> にあります。
+    </div>
   </section>
 
   <hr />
@@ -829,6 +868,89 @@ result = <span class="fn">run_simulation_sandboxed</span>(
     </div>
   </section>
 
+  <!-- 2026-10 UPDATE -->
+  <section id="update-2026-10">
+    <h2>2026-10 追加機能</h2>
+    <p>
+      ビューアの作り直し、カールノイズ、手法間の比較 Atlas、波紋・コースティクス、テスト拡充の要約。
+      数式や指標の定義は <a href="algorithms.html#curl-noise" style="color:var(--accent2)">アルゴリズム詳細解説</a>、
+      基礎から順に読む場合は <a href="LEARNING_GUIDE.md" style="color:var(--accent2)">LEARNING_GUIDE.md</a> を参照してください。
+    </p>
+
+    <div class="result-grid">
+      <div class="result-card"><div class="val">~59 fps</div><div class="lbl">ビューア 100,000 粒子<br>(RTX 3070)</div></div>
+      <div class="result-card"><div class="val">4</div><div class="lbl">比較モード同時表示<br>(同期ビュー)</div></div>
+      <div class="result-card"><div class="val">O(h²)</div><div class="lbl">カールノイズの発散<br>(有限差分で収束確認)</div></div>
+      <div class="result-card"><div class="val">35</div><div class="lbl">pytest テスト<br>(Node スイート含む)</div></div>
+    </div>
+
+    <div class="algo-grid">
+      <div class="algo-card">
+        <h4>ビューア再設計 (<code>viewer/index.html</code>)</h4>
+        <p>絵文字をやめ SVG 線アイコンに統一。手法切替チップ（SPH / FLIP / GNN / 格子法 / カール）は、その
+           <code>metadata.method</code> のデータを読み込んだときだけ有効になる。凡例の最小・最大は実データの範囲。
+           下部タイムライン（再生・シーク・フレーム/粒子数/fps 表示・速度・ループ）を追加。
+           <strong>比較モード</strong>は JSON を 2 つ以上ドロップすると最大 4 ビューを同一カメラで同期
+           （フレーム = floor(時刻 × fps)、最長のデータが基準、凡例の範囲は共有）。
+           重力・反発係数・粒子数のデモパラメータは即時反映。<code>.json</code> / <code>.json.gz</code> に対応。
+           固定表示「近似であり、物理的に厳密ではありません」を維持。</p>
+      </div>
+      <div class="algo-card">
+        <h4>カールノイズ (<code>solver/curl_noise.py</code>, <code>tools/gen_curl.py</code>)</h4>
+        <p>ランダムな Fourier 特徴のポテンシャルの回転を速度場にする擬似流体。解析的に
+           ∇·(∇×A) = 0 なので圧力投影が不要。有限差分で測った発散は刻み幅 h に対し
+           O(h²) で減る（離散化誤差のみ）ことをテストで確認。<strong>ナビエ–ストークスは解かず</strong>、
+           外力や壁にも反応しない。</p>
+      </div>
+      <div class="algo-card">
+        <h4>比較 Atlas (<code>tools/compare_solvers.py</code>)</h4>
+        <p>同じ「落下する水塊」を SPH / FLIP / Stam 格子法に与え、同じ定義の指標
+           （質量比・KE/M0・P<sub>y</sub>/M0・重心 vs 自由落下）で比較。結果は
+           <a href="COMPARE_ATLAS.md" style="color:var(--accent2)">COMPARE_ATLAS.md</a>。
+           GNN は学習済みチェックポイントが必要なため未計測。</p>
+      </div>
+      <div class="algo-card">
+        <h4>波紋とコースティクス (<code>viewer/ripple.html</code>, <code>viewer/js/heightfield.js</code>)</h4>
+        <p>減衰つき 2D 波動方程式を高さ場で解き、刻みが安定条件 dt ≤ dx/(c√2) を超えるときは
+           <code>step()</code> が自動でサブステップに分割。縁は吸収層で反射を抑える。床のコースティクスは
+           屈折光線の着地点を撒いて作る小傾き近似で、<strong>多重屈折は扱わない</strong>。
+           Node 用テスト <code>heightfield.test.js</code> つき。</p>
+      </div>
+      <div class="algo-card">
+        <h4>ナビエ–ストークスの話題の扱い (<code>NOTE_NAVIER_STOKES.md</code>)</h4>
+        <p>強制項ありとなしは別問題で、報道は争点あり・検証途中。どの実装も理論的結論を前提にしない、という
+           方針を <a href="NOTE_NAVIER_STOKES.md" style="color:var(--accent2)">メモ</a>に残した。</p>
+      </div>
+      <div class="algo-card">
+        <h4>テストと CI</h4>
+        <p>pytest は 35 件（カールノイズ・比較指標・高さ場を追加。うち 1 件は <code>heightfield.js</code> の
+           Node スイートを実行）。<code>.github/workflows/test.yml</code> に Node のセットアップを追加。</p>
+      </div>
+    </div>
+
+    <h3>比較 Atlas で分かったこと（t = 0.60 s, 約 400 粒子）</h3>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>手法</th><th>ms/step</th><th>質量比</th><th>KE/M0</th><th>重心 y [m]</th></tr>
+        <tr><td>SPH</td><td>56.71（Δt = 0.001 s）</td><td>1.000</td><td>0.713</td><td>0.160</td></tr>
+        <tr><td>FLIP</td><td>1.41（Δt = 0.01 s）</td><td>1.000</td><td>0.103</td><td>0.455</td></tr>
+        <tr><td>格子法 (Stam)</td><td>2.75（Δt = 0.01 s）</td><td style="color:#fbbf24">0.553</td><td>0.547</td><td>0.095</td></tr>
+      </table>
+    </div>
+    <ul style="margin:6px 0 0 20px;font-size:13.5px;">
+      <li>SPH / FLIP は粒子数が一定なので質量比は構成上 1.0。保存性は運動量・エネルギーで見る。</li>
+      <li>FLIP の重心は 0.60 s 時点で 0.455 m と、自由落下に比べて明らかに遅い。SPH は 0.40 s までに床に達している（重心 0.023 m）。</li>
+      <li>カールノイズ vs Stam: コストは粒子数 × 波の数 と 格子数で決まり、この条件では約 2,282 粒子が分岐点
+          （少なければカールノイズが軽い）。カールノイズは外力に応答しないので、物理らしさは別物。</li>
+    </ul>
+
+    <div class="box warn">
+      <strong>未解明の点:</strong> 格子法 (Stam) の質量比が 0.55 まで低下する原因は<strong>調査していません</strong>
+      （圧力投影の残差・移流の補間・境界処理が候補）。この表は学習用の簡易実装・この環境での一例であり、
+      手法の優劣ではなく「性格の違い」として読んでください。ビューアの 59 fps も 1 台（RTX 3070）での計測値です。
+    </div>
+  </section>
+
   <!-- CI/CD -->
   <section id="cicd">
     <h2>CI/CD — WASM 自動ビルド & GitHub Releases</h2>
@@ -878,21 +1000,30 @@ python FluidKit/setup/download_build.py --force</code></pre>
       <table>
         <tr><th>ファイル</th><th>役割</th><th>主要アルゴリズム</th></tr>
         <tr><td><code>tools/gen_sample.py</code></td><td>Python SPH シミュレーター</td><td>solver/sph_solver.py の SPHSolver 呼び出し（Phase1で5.6x高速化）, --gzip 出力対応</td></tr>
+        <tr><td><code>tools/gen_curl.py</code></td><td>カールノイズ JSON 生成 (NEW)</td><td>CurlNoise3D の速度場 + 一定の上昇速度で粒子を RK2 移流し、煙風の viewer 用 JSON を出力, --gzip 対応</td></tr>
+        <tr><td><code>tools/compare_solvers.py</code></td><td>手法比較 Atlas 生成 (NEW)</td><td>同一シナリオで SPH / FLIP / Stam / カールノイズを同じ指標で計測し <code>docs/COMPARE_ATLAS.md</code> を出力</td></tr>
         <tr><td><code>tools/xyz_to_json.py</code></td><td>XYZ/POS → JSON 変換</td><td>フォーマット自動検出, 境界ボックス計算</td></tr>
         <tr><td><code>neural/model_v2.py</code></td><td>Neural Fluid v2/v3</td><td>GlobalContext, LayerNorm, k=16, AMP (1.13M), 近傍 nbr 事前計算対応</td></tr>
         <tr><td><code>neural/collect_data.py</code></td><td>学習データ一括収集</td><td>速度正規化 (vel_std), 多パラメータサンプリング, cKDTree 近傍事前計算</td></tr>
         <tr><td><code>neural/train_v2.py</code></td><td>v2/v3 訓練</td><td>AdamW, CosineAnnealingLR, AMP GradScaler, mmap_mode='r' 読み込み, fp16 チェックポイント保存</td></tr>
         <tr><td><code>neural/infer_v2.py</code></td><td>v2/v3 推論 → JSON</td><td>速度正規化対応, 自律ロールアウト, フレームごと cKDTree 近傍計算</td></tr>
         <tr><td><code>utils.py</code></td><td>正規化ロジック集約 (NEW)</td><td>位置・速度正規化を一元化（collect_data.py / infer_v2.py の重複解消）</td></tr>
-        <tr><td><code>viewer/index.html</code></td><td>Three.js Viewer</td><td>Point Sprite シェーダー, 加算ブレンド, .json.gz 読み込み対応</td></tr>
+        <tr><td><code>viewer/index.html</code></td><td>Three.js Viewer (2026-10 再設計)</td><td>Point Sprite シェーダー, 加算ブレンド, .json/.json.gz 対応, 手法切替チップ, 実データ範囲の凡例, 下部タイムライン, 比較モード (最大4ビュー同期), デモパラメータ (100k 粒子で約59fps / RTX 3070)</td></tr>
+        <tr><td><code>viewer/ripple.html</code></td><td>波紋・コースティクス ビューア (NEW)</td><td>高さ場の 2D 減衰波動方程式 + 床のコースティクス（小傾き近似）</td></tr>
+        <tr><td><code>viewer/js/heightfield.js</code></td><td>高さ場ロジック (NEW)</td><td>半陰的 Euler, 安定 dt ≤ dx/(c√2) で自動サブステップ, 縁の吸収層, 光線の photon splat。Node テスト heightfield.test.js つき</td></tr>
         <tr><td><code>wasm/sph_wasm.cpp</code></td><td>C++ SPH (WASM 用)</td><td>SoA レイアウト, MAX_N=4096, Emscripten</td></tr>
         <tr><td><code>wasm/serve.py</code></td><td>COOP/COEP HTTP サーバー</td><td>SharedArrayBuffer 対応, port 8765</td></tr>
         <tr><td><code>solver/stable_fluids.py</code></td><td>格子ソルバー</td><td>map_coordinates, 60〜80x 高速化</td></tr>
         <tr><td><code>solver/sph_solver.py</code></td><td>SPH + 空間ハッシュ</td><td>SpatialHash O(N), ブロードキャストバグ修正済み (2026-07), gen_sample.py から利用</td></tr>
         <tr><td><code>solver/flip_solver.py</code></td><td>FLIP ハイブリッド</td><td>np.add.at scatter, 47x 高速化</td></tr>
+        <tr><td><code>solver/curl_noise.py</code></td><td>カールノイズ擬似流体 (NEW)</td><td>Fourier 特徴ポテンシャルの解析的 curl（2D 流れ関数 / 3D ベクトルポテンシャル）, 発散ゼロ</td></tr>
         <tr><td><code>solver/reproducibility.py</code></td><td>再現性保証</td><td>SHA-256 状態ハッシュ, NPZ 保存</td></tr>
         <tr><td><code>solver/runner.py</code></td><td>サンドボックス実行</td><td>クロスプラットフォーム タイムアウト</td></tr>
         <tr><td><code>tests/</code></td><td>pytest テストスイート (NEW)</td><td>momentum保存, 境界貫通なし, 再現性ハッシュ一致, I/Oラウンドトリップ・カールノイズ・比較指標・高さ場 (35件)</td></tr>
+        <tr><td><code>docs/diagrams/</code></td><td>構成図 SVG (NEW)</td><td>architecture / dataflow / viewer-internals / method-selection / solver-step。<code>build_diagrams.py</code> で再生成</td></tr>
+        <tr><td><code>docs/LEARNING_GUIDE.md</code></td><td>学習ガイド (NEW)</td><td>基礎 → アルゴリズム → スクリプト → 保守・拡張の順に読む講義形式</td></tr>
+        <tr><td><code>docs/COMPARE_ATLAS.md</code></td><td>比較 Atlas (NEW)</td><td>質量比・KE/M0・P<sub>y</sub>/M0・重心 vs 自由落下、カールノイズ vs Stam のコスト</td></tr>
+        <tr><td><code>docs/NOTE_NAVIER_STOKES.md</code></td><td>ナビエ–ストークス話題の扱いメモ (NEW)</td><td>強制項あり/なしは別問題、争点あり。実装は結論を前提にしない</td></tr>
         <tr><td><code>setup/download_build.py</code></td><td>WASM 自動取得</td><td>GitHub Releases から urllib のみで取得</td></tr>
         <tr><td><code>.github/workflows/release.yml</code></td><td>CI/CD</td><td>Emscripten ビルド + Release 自動配布 (タグ push 時)</td></tr>
         <tr><td><code>.github/workflows/test.yml</code></td><td>CI テスト自動実行 (NEW)</td><td>push/PR ごとに pytest 実行</td></tr>

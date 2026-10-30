@@ -186,8 +186,8 @@ class GridRunner:
         m = float(dens.sum() * self.dx ** 2)
         w = dens * self.dx ** 2
         return dict(mass_ratio=m / self.m0,
-                    ke=float(0.5 * (w * (u ** 2 + v ** 2)).sum() / m),
-                    py=float((w * v).sum() / m),
+                    ke=float(0.5 * (w * (u ** 2 + v ** 2)).sum() / self.m0),    # 定義どおり初期質量 M0 で割る
+                    py=float((w * v).sum() / self.m0),
                     com_y=float((w * self._cy).sum() / w.sum()))
 
     def snapshot(self):
@@ -362,6 +362,7 @@ def build_markdown(results, sample_times, particles, duration, curl=None) -> str
         "- **SPH** の壁は反射のみ (床の斥力なし) で、着地後は粒子が床に押しつぶされる。",
         "- **SPH / FLIP** は粒子数が一定なので質量比は構成上 1.0。保存するかどうかを見るには運動量・エネルギーを見る。",
         "- ms/シミュ秒は時間刻みの違いを吸収したコスト。SPH は陽解法のため小さい刻みが要る。",
+        "- **時間は環境・負荷で大きく変わる** (同じ環境でも実行ごとに 2 倍以上ずれることがある)。手法間の相対的な大小だけを読み、絶対値を引用しないこと。",
         "- いずれも学習用の簡易実装の値で、**物理的に厳密ではない**。手法の性格の比較として読むこと。",
         "",
     ]

@@ -12,7 +12,8 @@
  *
  * コースティクス: 鉛直入射の光が水面の傾きで屈折し、深さ D の床に届く位置を求めて、
  * 着地点に重み 1 を撒き (photon splat)、床のセルあたりの本数 = 強度 (一様なら 1) とする。
- * 小さい傾きの近似: 着地点 = 水面の点 − D (1−η) ∇h,  η = 1/n_water (≈ 1/1.33)。
+ * 小さい傾きの近似: 着地点 = 水面の点 + D (1−η) ∇h,  η = 1/n_water (≈ 1/1.33)。
+ * (山の斜面は ∇h が山頂と逆向きなので、光は山頂側へ曲がる = 山は凸レンズのように集光する)
  *
  * これは見た目用の近似。水面の非線形な効果・多重反射・波長依存は扱わない。
  */
@@ -124,7 +125,7 @@
       const bend = depth * (1 - eta);
       for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
         const [gx, gy] = this.gradient(i, j);
-        const fx = (i * dx - bend * gx) / cell, fy = (j * dx - bend * gy) / cell;     // 床の格子座標
+        const fx = (i * dx + bend * gx) / cell, fy = (j * dx + bend * gy) / cell;     // 床の格子座標
         if (fx < 0 || fy < 0 || fx > res - 1 || fy > res - 1) continue;             // 床の外へ出た光線
         const x0 = Math.min(Math.floor(fx), res - 2), y0 = Math.min(Math.floor(fy), res - 2);
         const tx = fx - x0, ty = fy - y0;

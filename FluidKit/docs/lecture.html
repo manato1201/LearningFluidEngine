@@ -226,6 +226,16 @@ section { scroll-margin-top: 24px; }
     <a href="#refactor-tests">安全網 — 物性テスト</a>
     <a href="#refactor-lessons">3つの教訓</a>
 
+    <div class="section-title">2026-10 拡張 (NEW)</div>
+    <a href="#ext-overview">全体像（構成図）</a>
+    <a href="#ext-curl">① カールノイズ</a>
+    <a href="#ext-ripple">② 波紋の高さ場と CFL</a>
+    <a href="#ext-caustics">③ コースティクス</a>
+    <a href="#ext-atlas">④ 比較 Atlas</a>
+    <a href="#ext-viewer">⑤ ビューア設計</a>
+    <a href="#ext-verify">⑥ 検証の流儀</a>
+    <a href="#ext-maintain">⑦ 保守・拡張の手順</a>
+
     <div class="section-title">CI / CD (NEW)</div>
     <a href="#cicd-workflow">WASM 自動ビルド</a>
     <a href="#cicd-download">Releases 自動取得</a>
@@ -1995,6 +2005,548 @@ pytest スイート（22 テスト、全パス）があります。数値計算�
     <li><strong>「アルゴリズム的に優れている」と「実際に速い」は別問題</strong> — CG法は理論上正しく、収束性にも優れるが、
       対象の問題規模（N=64〜128）では疎行列構築とドライバのオーバーヘッドが支配的だった。
       「より洗練された手法」に飛びつく前に、必ず対象の規模で計測する</li>
+  </ol>
+</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     2026-10 拡張 — カールノイズ / 波紋 / コースティクス / 比較 Atlas / ビューア / 検証 / 保守
+═══════════════════════════════════════════════════════════ -->
+<section id="ext-overview">
+<h2>2026-10 拡張 — 「軽い近似」と「測って確かめる」ための 7 章</h2>
+
+<p class="lead">
+2026-10 の改善では、物理方程式を厳密に解く手法（SPH / FLIP / 格子法）の横に、
+<strong>見た目用の軽い近似</strong>（カールノイズ・波紋の高さ場・コースティクス）を追加し、
+手法どうしを<strong>同じ定義の指標</strong>で並べる比較 Atlas と、並べて見るためのビューアを作りました。
+この章群では「何を・なぜ・どう作ったか」に加えて、<strong>どう確かめたか</strong>（検証の流儀）を重点的に扱います。
+</p>
+
+<div class="diagram-box">
+  <img src="diagrams/architecture.svg" style="width:100%;height:auto;border-radius:12px" alt="FluidKit システム構成図: 生成スクリプト、ソルバー、データ、ブラウザ表示、テストと CI の関係">
+</div>
+
+<table>
+  <tr><th>章</th><th>主なファイル</th><th>ひとことで</th></tr>
+  <tr><td><a href="#ext-curl" style="color:var(--accent)">① カールノイズ</a></td><td><code>solver/curl_noise.py</code> / <code>tools/gen_curl.py</code></td><td>ノイズの「回転」を速度にすれば発散が解析的にゼロ</td></tr>
+  <tr><td><a href="#ext-ripple" style="color:var(--accent)">② 波紋の高さ場と CFL</a></td><td><code>viewer/js/heightfield.js</code></td><td>波動方程式と、発散しない時間刻みの上限</td></tr>
+  <tr><td><a href="#ext-caustics" style="color:var(--accent)">③ コースティクス</a></td><td><code>heightfield.js</code> の <code>caustics()</code></td><td>屈折した光線を床に撒いて「光の集まり」を数える</td></tr>
+  <tr><td><a href="#ext-atlas" style="color:var(--accent)">④ 比較 Atlas</a></td><td><code>tools/compare_solvers.py</code> / <code>docs/COMPARE_ATLAS.md</code></td><td>指標の定義を全手法で揃える</td></tr>
+  <tr><td><a href="#ext-viewer" style="color:var(--accent)">⑤ ビューア設計</a></td><td><code>viewer/index.html</code></td><td>LUT・凡例・時間同期・比較モード</td></tr>
+  <tr><td><a href="#ext-verify" style="color:var(--accent)">⑥ 検証の流儀</a></td><td><code>tests/</code> / <code>heightfield.test.js</code></td><td>物理不変量 + Node + ブラウザ実測</td></tr>
+  <tr><td><a href="#ext-maintain" style="color:var(--accent)">⑦ 保守・拡張の手順</a></td><td>リポジトリ全体</td><td>新しいソルバーを足すチェックリスト</td></tr>
+</table>
+
+<div class="callout callout-info">
+  <div class="callout-title">📖 併せて読む</div>
+  <a href="LEARNING_GUIDE.md" style="color:var(--accent)">LEARNING_GUIDE.md</a>（文章でじっくり読む学習ガイド）と
+  <a href="COMPARE_ATLAS.md" style="color:var(--accent)">COMPARE_ATLAS.md</a>（比較表の実物）。
+  この章で引用する数値はすべて実際のファイルの実行結果・記載値です。
+</div>
+</section>
+
+<section id="ext-curl">
+<h2>① カールノイズ — 発散ゼロの理由を ψ から導く</h2>
+
+<p class="lead">
+非圧縮流体は $\nabla\cdot\mathbf{u}=0$ を満たす必要があります。SPH や Stam 法は圧力を解いてこれを「近似的に」満たしますが、
+カールノイズは<strong>最初から必ず満たす速度場</strong>を作ることで、圧力投影を丸ごと省きます。
+</p>
+
+<h3>なぜ発散がゼロになるのか</h3>
+<p>2D では、スカラー場 $\psi$（流れ関数）を用意して速度を次のように決めます。</p>
+<div class="formula-box">
+  $$u=\frac{\partial\psi}{\partial y},\qquad v=-\frac{\partial\psi}{\partial x}
+  \;\;\Rightarrow\;\;
+  \nabla\cdot\mathbf{u}=\frac{\partial^2\psi}{\partial x\,\partial y}-\frac{\partial^2\psi}{\partial y\,\partial x}=0$$
+  <div class="formula-label">偏微分の順序は交換できる（$\psi$ が滑らかなら）ので、2 項が打ち消し合う</div>
+</div>
+<p>3D では 3 つの独立なノイズをベクトルポテンシャル $\mathbf{A}=(A_1,A_2,A_3)$ とし、$\mathbf{u}=\nabla\times\mathbf{A}$ とします。
+$\nabla\cdot(\nabla\times\mathbf{A})=0$ はベクトル解析の恒等式です。</p>
+
+<h3>ノイズを「解析的に微分できる形」で作る</h3>
+<p>$\psi$ を<strong>ランダムな向きの正弦波の和</strong> $\sum_k a_k\sin(\mathbf{k}\cdot\mathbf{x}+\varphi_k+\omega_k t)$ にすれば、
+勾配は $\cos$ に置き換えるだけで厳密に求まります。有限差分を使わないので、速度場そのものに離散化誤差が入りません。</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>solver/curl_noise.py — _FourierNoise / CurlNoise2D（抜粋）</span></div>
+  <pre><code class="language-python"># 速度 ≈ |k|·a が 1 オクターブごとに persistence 倍になるよう a ∝ p^o / |k|
+amps.append(persistence ** o / (2.0 * np.pi * freq))
+...
+def grad(self, p, t):
+    """∇f を (N, dim) で返す。"""
+    phase = p @ self.k.T + self.phi + self.omega * t     # (N, M)
+    return np.cos(phase) @ (self.k * self.a[:, None])
+
+def velocity(self, p, t=0.0):                            # CurlNoise2D
+    g = self._psi.grad(np.asarray(p, dtype=np.float64), t)   # (∂ψ/∂x, ∂ψ/∂y)
+    return self.strength * np.stack([g[:, 1], -g[:, 0]], axis=1)</code></pre>
+</div>
+
+<h3>ゼロであることを数値で確かめる</h3>
+<p><code>divergence_residual()</code> は中心差分で $\max|\nabla\cdot\mathbf{u}|$ を測り、基準として速度勾配の rms も返します。
+中心差分の誤差は $O(h^2)$ なので、$h$ を 1/10 にすると残差は 1/100 になるはずです。<code>CurlNoise2D(seed=1)</code>、領域 $[0,3]^2$ で実測した値：</p>
+<table>
+  <tr><th>差分幅 h</th><th>max|div|</th><th>速度勾配 rms</th></tr>
+  <tr><td>1e-2</td><td>2.50e-03</td><td>2.24</td></tr>
+  <tr><td>1e-3</td><td>2.50e-05</td><td>2.24</td></tr>
+  <tr><td>1e-4</td><td>2.50e-07</td><td>2.24</td></tr>
+</table>
+<p>残差が h² に比例して縮むこと自体が「解析的にはゼロで、見えているのは測定側の誤差だけ」という証拠です。
+もし速度場に本当の発散が残っていれば、h を小さくしても残差は一定値で止まります。</p>
+
+<h3>粒子を流す（gen_curl.py）</h3>
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>tools/gen_curl.py — 移流の核心</span></div>
+  <pre><code class="language-python">def vel(p, t):
+    v = field.velocity(p, t)
+    v[:, 1] += RISE                       # 浮力の代わりの一定の上昇速度 (0.6)
+    return v
+...
+mid = pos + 0.5 * dt * v1                 # 中点法 (RK2)
+pos = pos + dt * vel(mid, t + 0.5 * dt)</code></pre>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ 落とし穴：「発散ゼロ」は「物理的に正しい」ではない</div>
+  <ul style="margin-left:20px;margin-top:8px">
+    <li>解いているのはナビエ–ストークス方程式ではなく<strong>ノイズの回転</strong>だけ。壁・外力・粘性には応答しません（<code>gen_curl.py</code> が粒子を押し戻すのは別処理）。</li>
+    <li>$h$ を小さくしすぎると丸め誤差が支配的になり、残差は逆に増えます（<code>divergence_residual</code> の docstring 参照）。</li>
+    <li>上昇速度の加算・発生源への再投入・領域への <code>clip</code> は「発散ゼロの速度場」の外側の処理です。粒子の分布が一様に保たれる保証はありません。</li>
+  </ul>
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✏️ 演習</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li>$\psi=\sin(x)\sin(y)$ について $(u,v)$ を手計算し、$\nabla\cdot\mathbf{u}=0$ を確かめてください。</li>
+    <li><code>divergence_residual</code> を <code>h=1e-8</code> まで広げて残差をグラフにし、どこで増加に転じるか観察して理由を説明してください。</li>
+    <li>3D の 3 成分（<code>u, v, w</code>）の式を <code>CurlNoise3D.velocity</code> から読み取り、$\nabla\times\mathbf{A}$ の定義と一致することを確かめてください。</li>
+  </ol>
+</div>
+</section>
+
+<section id="ext-ripple">
+<h2>② 波紋の高さ場と CFL 条件</h2>
+
+<p class="lead">
+水面を 2D の高さ場 $h(x,y,t)$ として扱い、波動方程式を解きます。ここで学ぶ最重要点は
+<strong>「時間刻みには上限がある」</strong>こと（CFL 条件）と、それを<strong>コードが自動で守る</strong>設計です。
+</p>
+
+<h3>支配方程式と離散化</h3>
+<div class="formula-box">
+  $$\frac{\partial^2 h}{\partial t^2}=c^2\nabla^2 h-\gamma\,\frac{\partial h}{\partial t}$$
+  <div class="formula-label">$c$ は波速、$\gamma$ は減衰。速度 $v=h_t$ を持たせて 2 本の 1 階式に分けて解く</div>
+</div>
+<p>半陰的（symplectic）Euler では、<strong>先に $v$ を更新し、新しい $v$ で $h$ を更新</strong>します。順序が逆だと陽的 Euler になり、振動が増幅します。</p>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">JavaScript</span><span>viewer/js/heightfield.js — _substep（抜粋）</span></div>
+  <pre><code class="language-javascript">const k = (speed * speed) / (dx * dx);
+...
+const lap = h[j * n + im] + h[j * n + ip] + h[jm * n + i] + h[jp * n + i] - 4 * c;
+const edge = Math.min(i, j, n - 1 - i, n - 1 - j);
+const gamma = damping + (edge &lt; sponge ? 6.0 * (1 - edge / sponge) ** 2 : 0);   // 縁の吸収層
+v[idx] += dt * (k * lap - gamma * v[idx]);          // 1. 速度を先に更新
+...
+for (let idx = 0; idx &lt; h.length; idx++) h[idx] += dt * v[idx];   // 2. 新しい速度で高さを更新</code></pre>
+</div>
+
+<h3>CFL 条件 — 上限を導く</h3>
+<p>5 点ラプラシアンの最大固有値は $8/dx^2$ なので、最も速く振動するモードの角周波数は $\omega_{\max}=c\sqrt{8}/dx$ です。
+半陰的 Euler が安定なのは $\omega_{\max}\,dt\le 2$ のときなので、</p>
+<div class="formula-box">
+  $$dt\le\frac{2}{\omega_{\max}}=\frac{dx}{c\sqrt{2}}$$
+  <div class="formula-label">実装ではさらに安全率 0.9 を掛ける（<code>stableDt()</code>）</div>
+</div>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">JavaScript</span><span>step() — フレームの dt を安定刻み以下に分割</span></div>
+  <pre><code class="language-javascript">stableDt() { return 0.9 * this.dx / (this.speed * Math.SQRT2); }
+
+step(dtFrame) {
+  const sub = Math.max(1, Math.ceil(dtFrame / this.stableDt()));
+  const dt = dtFrame / sub;
+  for (let s = 0; s &lt; sub; s++) this._substep(dt);
+  ...
+}</code></pre>
+</div>
+<p>解像度 <code>n</code> を上げると $dx$ が縮み、安定な $dt$ も縮みます（コストは格子点数 × サブステップ数）。
+端は鏡像で折り返す Neumann 境界、さらに縁付近の<strong>吸収層（sponge）</strong>で反射波が戻るのを防いでいます。</p>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ 落とし穴</div>
+  <ul style="margin-left:20px;margin-top:8px">
+    <li>フレーム dt（例: 1/60 s）を<strong>そのまま</strong>物理 dt に使わない。解像度や波速を変えた途端に発散します。</li>
+    <li>発散は「NaN」ではなく<strong>振幅が静かに指数的に増える</strong>形で現れます。テストは <code>isFinite</code> だけでなく <code>maxAbs ≤ 初期振幅</code> まで見ること。</li>
+    <li>安全率なしの限界ぎりぎりの刻みは、離散スキームの保存量が理論値からずれます（次々章・⑥で再登場）。</li>
+  </ul>
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✏️ 演習</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li><code>n=128, size=2, speed=1.2</code> のとき <code>stableDt()</code> を手計算し、1/60 s のフレームで何サブステップになるか求めてください（<code>lastSubsteps</code> で確認）。</li>
+    <li><code>_substep</code> で $h$ を先に更新する順序に書き換え、<code>damping: 0</code> で 3 秒走らせて <code>maxAbs()</code> の変化を観察してください。</li>
+    <li>吸収層 <code>sponge</code> を 0 にすると縁で何が起きるか、<code>viewer/ripple.html</code> で確かめてください。</li>
+  </ol>
+</div>
+</section>
+
+<section id="ext-caustics">
+<h2>③ コースティクス — 屈折と光の集まり</h2>
+
+<p class="lead">
+プールの底に揺れる光の網目がコースティクスです。波で水面が傾くと光が曲がり、床の一部に<strong>集まって</strong>明るくなります。
+ここでは「光線を 1 本ずつ床へ撒いて、セルごとの本数を数える」という素朴な方法で近似します。
+</p>
+
+<h3>屈折 → 床の着地点</h3>
+<p>鉛直に入射する光が、傾き $\nabla h$ の水面で屈折するとします。傾きが小さければ入射角は ≈ 傾き $s$ で、
+スネルの法則 $\sin\theta_i=n\sin\theta_t$ から屈折角 $\theta_t\approx\eta\,s$（$\eta=1/n_{\text{water}}\approx 0.75$）。
+鉛直からの曲がり角は $(1-\eta)s$ なので、深さ $D$ の床では水平に $D(1-\eta)s$ だけずれます。</p>
+<div class="formula-box">
+  $$\mathbf{x}_{\text{floor}}=\mathbf{x}+D\,(1-\eta)\,\nabla h(\mathbf{x})$$
+  <div class="formula-label">小さい傾きの近似。コードでは <code>bend = depth * (1 - eta)</code> を使い、着地点は <code>i * dx + bend * gx</code>。山の斜面では ∇h が頂と逆向きなので光は頂側へ曲がる(凸レンズ)</div>
+</div>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">JavaScript</span><span>heightfield.js — caustics()（抜粋）</span></div>
+  <pre><code class="language-javascript">const bend = depth * (1 - eta);
+for (let j = 0; j &lt; n; j++) for (let i = 0; i &lt; n; i++) {
+  const [gx, gy] = this.gradient(i, j);
+  const fx = (i * dx + bend * gx) / cell, fy = (j * dx + bend * gy) / cell;   // 床の格子座標
+  if (fx &lt; 0 || fy &lt; 0 || fx &gt; res - 1 || fy &gt; res - 1) continue;           // 床の外へ出た光線
+  ...  // 双線形の重みで 4 セルに撒く (photon splat)
+}
+// 1 光線 = 水面 1 セル分の光。床 1 セルが受ける平均を 1 に正規化する
+const scale = (res * res) / (n * n);</code></pre>
+</div>
+
+<h3>なぜ「集まる」のか</h3>
+<p>水面の点 $\mathbf{x}$ から床の点への写像のヤコビ行列は $J=I-D(1-\eta)\,\nabla\nabla h$（$h$ のヘッセ行列）です。
+光の強度は面積の伸び縮みの逆数なので $I\propto 1/|\det J|$。
+$D(1-\eta)$ とヘッセ行列の固有値の積が 1 に近づく場所で $\det J\to 0$ となり、強度が跳ね上がります。
+これがコースティクスの明るい線です（水面の曲率が大きいほど、浅い深さでも焦点に達します）。</p>
+
+<table>
+  <tr><th>状態</th><th>期待される結果</th><th>テスト（heightfield.test.js）</th></tr>
+  <tr><td>平らな水面</td><td>床は一様。平均 ≈ 1、max &lt; 1.8</td><td>平らな水面のコースティクスは一様</td></tr>
+  <tr><td>波がある（0.5 s 後）</td><td>max &gt; 2×平均、平均 ≤ 1（光線は増えない）</td><td>波があると光が集まる</td></tr>
+  <tr><td>単独の山 / 谷</td><td>山の真下が明るい(&gt; 1.5)、谷の真下が暗い(&lt; 0.8)</td><td>山は真下に光を集め、谷は散らす</td></tr>
+</table>
+
+<div class="callout callout-error">
+  <div class="callout-title">🐛 実際に起きた符号の誤り — 「単純な形で期待を先に決めてから測る」</div>
+  以前の実装は着地点を <code>x - bend*gx</code>(逆符号)で計算していました。ガウス状の山(<code>disturb(1, 1, 0.3, +0.05)</code>、<code>n=128, size=2</code>)を 1 つ置くと、
+  床の中央 5×5 の平均が <strong>0.45</strong>(光が散る)、谷では <strong>2.39</strong>(光が集まる)で、現実(山=凸レンズは光を<strong>集める</strong>)と逆でした。
+  乱雑な波では網目状の模様が符号によらず似るため、「max &gt; 2×平均」のテストは通っていました。
+  修正は符号 1 文字(<code>+ bend*gx</code>)ですが、本当の対策は<strong>単純な形状(1 つの山 / 1 つの谷)で期待値を先に決めたテストを足すこと</strong>です
+  (<code>heightfield.test.js</code>「山は真下に光を集め、谷は散らす」: 山 &gt; 1.5、谷 &lt; 0.8)。2 人のレビュアーが独立に同じ指摘をして見つかりました。
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ 落とし穴</div>
+  <ul style="margin-left:20px;margin-top:8px">
+    <li>床の解像度を水面と同じにすると、光線の本数のばらつき（<strong>撒き方のノイズ</strong>）で縞が出ます。<code>res</code> を水面の約半分にして 1 セルあたりの本数を増やしています。</li>
+    <li>床の外へ出た光線は捨てるので、平均は 1 を<strong>超えません</strong>。「エネルギー保存の目安」は <code>mean ≈ 1</code>。</li>
+    <li>これは<strong>見た目用の近似</strong>です。大きな傾き・多重反射・波長による分散（虹色）は扱いません。</li>
+  </ul>
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✏️ 演習</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li>$\eta=1$（屈折なし）のとき床の光はどうなるか、式から予想し、<code>caustics(1.0, 1)</code> で確かめてください。</li>
+    <li>深さ <code>depth</code> を 0.5 → 3.0 に変えて <code>max</code> がどう変わるか測り、上のヤコビ行列の式で説明してください。</li>
+    <li>符号を逆(<code>x - bend*gx</code>)に戻して <code>node --test</code> を走らせ、どのテストが落ちるか確かめてください(単独の山のテストだけが落ちるはずです)。なぜ他のテストでは見つからないか説明してください。</li>
+    <li>床の解像度 <code>res</code> を <code>n</code> と同じにして、ノイズが増えることを確かめてください。</li>
+  </ol>
+</div>
+</section>
+
+<section id="ext-atlas">
+<h2>④ 比較 Atlas と「同じ定義の指標」</h2>
+
+<p class="lead">
+SPH・FLIP・格子法は「粒子」「粒子+格子」「密度場」と<strong>表現がまったく違う</strong>ため、そのまま比べると意味がありません。
+比較 Atlas は、同じ初期条件を与え、<strong>全手法で同一の定義の指標</strong>を計算して並べます。
+</p>
+
+<h3>シナリオと指標</h3>
+<p>単位箱 $[0,1]^2$ の上部に半径 0.12 の水塊を置き、重力 9.8 で落とします（初期速度ゼロ、粒子数 ≈ 400、0.6 秒）。
+各手法は自分の安定な刻みでサブステップし、<strong>同じシミュレーション時刻</strong>で測ります。</p>
+<table>
+  <tr><th>指標</th><th>定義</th><th>単位系に依存しない理由</th></tr>
+  <tr><td>質量比</td><td>$M(t)/M_0$（粒子法は 1、格子法は $\sum\rho\,dx^2$ の変化）</td><td>初期質量で割る</td></tr>
+  <tr><td>KE/M₀</td><td>$\sum \tfrac12 m|\mathbf{v}|^2/M_0$ [m²/s²]</td><td>質量で割る</td></tr>
+  <tr><td>P<sub>y</sub>/M₀</td><td>$\sum m v_y/M_0$ [m/s]</td><td>同上</td></tr>
+  <tr><td>重心の高さ</td><td>$\sum m y/\sum m$ と、自由落下 $y_0-\tfrac12 g t^2$</td><td>理論値と同じ軸で比べられる</td></tr>
+  <tr><td>コスト</td><td>ms/step と <strong>ms/シミュ秒</strong></td><td>時間刻みの違いを吸収</td></tr>
+</table>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>tools/compare_solvers.py — FLIPRunner と GridRunner の metrics()</span></div>
+  <pre><code class="language-python"># FLIP (粒子): 各粒子の質量は等しい → M0 で割ると平均になる
+return dict(mass_ratio=1.0,
+            ke=float(0.5 * (self.vel ** 2).sum() / self.n),
+            py=float(self.vel[:, 1].mean()),
+            com_y=float(self.pos[:, 1].mean()))
+
+# 格子法 (Stam): 質量 = 密度 × セル面積 を重みにして同じ量を計算
+w = dens * self.dx ** 2
+return dict(mass_ratio=m / self.m0,
+            ke=float(0.5 * (w * (u ** 2 + v ** 2)).sum() / self.m0),   # 粒子法と同じく初期質量 M0 で割る
+            py=float((w * v).sum() / self.m0),
+            com_y=float((w * self._cy).sum() / w.sum()))</code></pre>
+</div>
+
+<h3>実測結果（COMPARE_ATLAS.md, t = 0.60 s）</h3>
+<table>
+  <tr><th>手法</th><th>要素</th><th>ms/シミュ秒</th><th>質量比</th><th>KE/M₀</th><th>重心 y [m]</th></tr>
+  <tr><td>SPH</td><td>401 粒子</td><td>56712</td><td>1.000</td><td>0.713</td><td>0.160</td></tr>
+  <tr><td>FLIP</td><td>401 粒子 + 32×32 格子</td><td>141</td><td>1.000</td><td>0.103</td><td>0.455</td></tr>
+  <tr><td>格子法 (Stam)</td><td>64×64 セル</td><td>275</td><td class="hl-red">0.553</td><td>0.547</td><td>0.095</td></tr>
+  <tr><td>GNN</td><td colspan="5">学習済みチェックポイントが必要なため未計測</td></tr>
+</table>
+<p>0.3 秒時点の重心は理論（自由落下）0.309 に対し SPH 0.290、Stam 0.442、FLIP 0.612。SPH が最も自由落下に近く、Stam は空気側も非圧縮のため<strong>遅れて</strong>落ちます。</p>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ 読み方の落とし穴</div>
+  <ul style="margin-left:20px;margin-top:8px">
+    <li>粒子法の質量比は<strong>粒子数が一定なので構成上 1.0</strong>。保存性は運動量・エネルギーで見る必要があります。</li>
+    <li>Stam の質量比 0.553 は、Atlas 自身が<strong>「原因は未調査」</strong>と明記しています（圧力投影の残差・移流の補間・境界処理が候補）。分からないことを分からないと書くのも文書の品質です。</li>
+    <li>表は<strong>手法の性格</strong>の比較であって、精度の優劣ではありません（学習用の簡易実装）。</li>
+  </ul>
+</div>
+
+<h3>カールノイズは本当に「軽い」のか</h3>
+<p>計画段階では「カールノイズは軽い」と見込んでいましたが、測ると<strong>条件次第</strong>でした（Atlas §4）：Stam 64×64 は 1.15 ms（格子数で決まる）、
+カールノイズは 4096 粒子で 2.06 ms（粒子数にほぼ比例）。損益分岐は<strong>約 2,282 粒子</strong>で、それより少なければカールノイズが軽く、多ければ Stam が軽い。
+一方、発散は Stam が（最大/勾配 rms）で 7.40e-01、カールノイズが 1.70e-05 と桁違いに小さい。
+<strong>「軽さ」と「発散の小ささ」と「物理らしさ」は別の軸</strong>です。</p>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✏️ 演習</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li><code>python FluidKit/tools/compare_solvers.py</code> を実行し、自分の環境でも ms/シミュ秒の順序（SPH ≫ Stam &gt; FLIP）になるか確かめてください。</li>
+    <li>GNN 用の <code>Runner</code> を追加するとき、<code>metrics()</code> の 4 項目をどう定義すれば他手法と比較可能になるか考えてください（質量が無い場合は？）。</li>
+    <li>SPH の重心が 0.4 s 以降 0.023 → 0.160 と上がる理由を、Atlas §3 の「壁は反射のみ」から説明してください。</li>
+  </ol>
+</div>
+</section>
+
+<section id="ext-viewer">
+<h2>⑤ ビューア設計 — LUT・凡例・時間同期・比較モード</h2>
+
+<p class="lead">
+<code>viewer/index.html</code> は単一ファイルですが、役割は 3 つに分かれています：
+状態を持つ <code>FluidViewer</code>、データ 1 本ぶんの描画を持つ <code>View</code>、DOM を更新する <code>ui</code>。
+</p>
+
+<div class="diagram-box">
+  <img src="diagrams/viewer-internals.svg" style="width:100%;height:auto;border-radius:12px" alt="ビューア内部構造: JSON 読み込みからデータセット、View、描画ループ、時間同期まで">
+</div>
+
+<h3>① 色と凡例は「ひとつの定義」から作る</h3>
+<p>色の定義（<code>PALETTES</code>）を<strong>描画用の LUT テクスチャ</strong>と<strong>凡例のバー</strong>の両方が読みます。
+片方だけ直して色と凡例がずれる事故が構造的に起きません。凡例の数値範囲も、固定値ではなく<strong>読み込んだデータの実際の最小・最大</strong>です。</p>
+<div class="code-block">
+  <div class="code-header"><span class="lang">JavaScript</span><span>index.html — LUT と範囲</span></div>
+  <pre><code class="language-javascript">function buildLut() {   // PALETTES[m](t) を 256 段に焼いて DataTexture にする
+  ...
+  const c = PALETTES[m](x / (W - 1)), o = (m * W + x) * 4;
+}
+// 色の範囲 = 表示中の全データの実際の最小・最大(比較モードは全ビュー共通)
+u.uYMin.value = Math.min(...vis.map(d =&gt; d.range.y[0]));
+u.uSpeedMax.value = Math.max(...vis.map(d =&gt; d.range.speed[1]));</code></pre>
+</div>
+
+<h3>② 粒子サイズは「粒子間隔」に結び付ける</h3>
+<p>頂点シェーダでは <code>gl_PointSize = uSize * 0.6 * uSpacing * uPxPerWorld / -mv.z</code>。
+<code>uSpacing</code> はデータセットごとに先頭フレームの広がりと粒子数から <code>estimateSpacing()</code> が見積もります
+（ほぼ平面のデータは面積で、そうでなければ体積で割る）。これで 400 粒子の 2D も 10 万粒子の 3D も、隣の粒子と<strong>ちょうど接する大きさ</strong>になります。</p>
+
+<h3>③ 時間同期と比較モード</h3>
+<div class="code-block">
+  <div class="code-header"><span class="lang">JavaScript</span><span>index.html — FluidViewer の時間</span></div>
+  <pre><code class="language-javascript">get master() {                                     // 最も長いデータをタイムラインの基準にする
+  return this.visible.reduce((a, d) =&gt; (!a || d.duration &gt; a.duration ? d : a), null);
+}
+frameOf(ds) { return Math.min(ds.n - 1, Math.floor(this.time * ds.fps + 1e-6)); }</code></pre>
+</div>
+<p>状態として持つのは<strong>時刻 <code>time</code> ひとつだけ</strong>で、各データは自分の fps で <code>floor(time × fps)</code> のフレームを選びます。
+fps や長さが違っても（例: 60 fps のデータと 30 fps のデータ）ずれません。短いデータは最後のフレームで止まります。
+比較モードは最大 4 本を viewport + scissor で分割して同じカメラで描き、色の範囲は全ビュー共通にします。</p>
+
+<div class="diagram-box">
+  <img src="diagrams/dataflow.svg" style="width:100%;height:auto;border-radius:12px" alt="データの流れ: gen_sample などの生成スクリプトから JSON、ビューアまで">
+</div>
+
+<div class="callout callout-error">
+  <div class="callout-title">🐛 実際に踏んだ罠：粒子サイズがデータのスケールを無視した</div>
+  最初の実装は粒子サイズを固定の画素数で決めていました。密な塊では粒子が重なり、加算ブレンドで<strong>全部が白く飽和</strong>して、
+  凡例の色と見た目の対応が読めなくなりました。原因は「サイズがデータの粒子間隔と無関係だった」こと。
+  <code>uSize</code> を「間隔に対する倍率」にして解決しました。<strong>見た目の不具合はたいてい単位・スケールの不一致</strong>です。
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✏️ 演習</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li><code>PALETTES</code> に新しいパレットを 1 つ足すとき、<code>COLOR_MODES</code> と FS の <code>(float(uColorMode) + 0.5) / 4.0</code> のどこを直す必要があるか洗い出してください。</li>
+    <li>fps=60, 90 フレームのデータと fps=1000, 600 フレームのデータを比較表示したとき、<code>time=0.3</code> でそれぞれ何フレーム目が出るか計算してください。</li>
+    <li><code>estimateSpacing</code> が平面データで面積を使う理由を、粒子 400 個・範囲 1×1 の例で説明してください。</li>
+  </ol>
+</div>
+</section>
+
+<section id="ext-verify">
+<h2>⑥ 検証の流儀 — 不変量・Node・ブラウザ実測</h2>
+
+<p class="lead">
+数値計算と描画のコードは「動いた気がする」では済みません。2026-10 の作業では、検証を<strong>3 つの層</strong>に分けました。
+どの層も「画面を眺めて確かめる」のではなく、<strong>数値で確かめる</strong>のが共通方針です。
+</p>
+
+<table>
+  <tr><th>層</th><th>道具</th><th>何を確かめるか（例）</th></tr>
+  <tr><td>物理不変量</td><td>pytest（<code>tests/test_curl_noise.py</code> ほか）</td><td>発散が $O(h^2)$ で縮む / 比較指標の定義が全手法で一致 / 運動量・境界・NaN</td></tr>
+  <tr><td>純ロジック</td><td>Node（<code>node --test</code>）</td><td>どの dt でも発散しない / エネルギー保存 / コースティクスの正規化</td></tr>
+  <tr><td>ブラウザ実測</td><td>ヘッドレス Chrome + CDP</td><td>時間同期 / シークがデータと一致 / 凡例 = データ範囲 / 10 万粒子で ≈59 fps（RTX 3070）、JS の seek は 0.7 ms</td></tr>
+</table>
+
+<h3>Node のテストを pytest から呼ぶ</h3>
+<p><code>heightfield.js</code> は DOM に依存しない純ロジックにしてあるので Node で単体テストできます
+（file:// で開くビューアは ES module を読めないため、<code>globalThis</code> と <code>module.exports</code> の両対応にしています）。
+pytest 側からは subprocess で呼び、Node が無い環境ではスキップします。</p>
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>tests/test_heightfield_js.py</span></div>
+  <pre><code class="language-python">@pytest.mark.skipif(shutil.which("node") is None, reason="node が見つからない")
+def test_heightfield_node_suite():
+    proc = subprocess.run(
+        ["node", "--test", str(JS_DIR / "heightfield.test.js")],
+        capture_output=True, text=True, encoding="utf-8", timeout=120,
+    )
+    assert proc.returncode == 0, (proc.stdout[-3000:] + proc.stderr[-1000:])</code></pre>
+</div>
+
+<h3>ブラウザ内の状態を CDP で読む</h3>
+<p>ビューアは検証用に <code>window.fluidViewer</code> を公開しています。ヘッドレス Chrome に CDP（<code>Runtime.evaluate</code>）で式を送り、
+<strong>uniform の値・フレーム番号・範囲を数値として取り出して</strong>比較します。次は式の一例です（説明用）。</p>
+<div class="code-block">
+  <div class="code-header"><span class="lang">JavaScript</span><span>Runtime.evaluate に渡す式の例（説明用）</span></div>
+  <pre><code class="language-javascript">const v = window.fluidViewer;
+v.seekFrame(30);
+({ time: v.time, frames: v.visible.map(d =&gt; v.frameOf(d)),
+   spacing: v.visible.map(d =&gt; d.spacing),                 // undefined だと 1px 点になる
+   legendMin: document.getElementById('lg-min').textContent,
+   uSpeedMin: v.uniforms.uSpeedMin.value })</code></pre>
+</div>
+
+<h3>今回の 4 つの教訓</h3>
+<div class="card-grid">
+  <div class="card"><h4>1. 見た目はスケールで壊れる</h4><p>粒子サイズが間隔を無視 → 密な塊が加算ブレンドで白飽和し、凡例が読めない。サイズを粒子間隔の倍率にして解決。</p></div>
+  <div class="card"><h4>2. 絵ではなく値を出す</h4><p><code>view.spacing</code> と書くべきところを <code>ds.spacing</code> と取り違え、uniform が <code>undefined</code> のまま 1px の点に。CDP で uniform を<strong>印字</strong>して初めて発見。</p></div>
+  <div class="card"><h4>3. 直すのはテストの定義</h4><p>エネルギーテストが 3 回失敗。原因は物理でなく定義：辺の位置エネルギーの欠落、限界付近の影のエネルギー、1 ステップあたり約 0.06% の振動。</p></div>
+  <div class="card"><h4>4. 測ってから主張する</h4><p>「カールノイズは軽い」と見込んだが、損益分岐は約 2,300 粒子（Stam 64²）。計画の主張より実測を信じる。</p></div>
+</div>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">JavaScript</span><span>heightfield.test.js — 教訓 3 の結果（コメントに理由を残す）</span></div>
+  <pre><code class="language-javascript">// 波が縁に届く前 (&lt; 0.6 s) に、安定限界の 1/4 の細かい刻みで測る。
+// 限界ぎりぎりの刻みでは離散スキームの保存量が影のエネルギーとずれるため、ここでは検証対象にしない。
+const dt = 0.25 * hf.stableDt();
+...
+assert.ok(worst &lt; 0.03, `エネルギー変動 ${(worst * 100).toFixed(2)}%`);
+
+// 減衰ありは、1 ステップ単位では半陰的 Euler の微小な振動 (~0.06%) があるため
+// 0.1 秒ごと（減衰で約 8% 減る間隔）で比べる。</code></pre>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ 「テストを緩める」と「定義を直す」は違う</div>
+  閾値を甘くして通すのは誤魔化しです。今回は<strong>テストが測っている量が、スキームが保存する量と一致していなかった</strong>ので、
+  エネルギーの定義（全ての辺を含める）と測定区間（限界の 1/4 刻み、0.6 s 以内、減衰は 0.1 s ごと）を直しました。
+  さらに「3 倍の刻みでは確かに発散する」という<strong>負のテスト</strong>も入れて、テストが何も検出できていない状態を避けています。
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✏️ 演習</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li><code>node --test FluidKit/viewer/js/heightfield.test.js</code> を実行し、<code>stableDt()</code> の係数 0.9 を 3.0 に変えて、どのテストが落ちるか確認してください。</li>
+    <li>新しい不変量テストを 1 つ考えてください（例: 波の左右対称性。中央に盛り上げた高さ場は <code>h[j*n+i]</code> と <code>h[j*n+(n-1-i)]</code> が等しいはず）。</li>
+    <li>ビューアで「凡例の最大値が実データの最大速度と一致する」ことを CDP で確かめる式を書いてください。</li>
+  </ol>
+</div>
+</section>
+
+<section id="ext-maintain">
+<h2>⑦ 保守・拡張の手順 — 新しいソルバーを足すチェックリスト</h2>
+
+<p class="lead">
+カールノイズを足したときの実際の手順を一般化したものです。ポイントは
+<strong>「データ形式（JSON の <code>metadata.method</code>）」が全体の接着剤</strong>になっていることです。
+</p>
+
+<ol class="steps">
+  <li><strong>solver/ に実装する</strong>
+    UI や I/O を持たない純粋な計算だけにします（例: <code>solver/curl_noise.py</code>）。乱数は seed 指定で決定的に。
+    「近似であること・解かないもの」を docstring の冒頭に明記します。</li>
+  <li><strong>tools/ に生成スクリプトを書き、<code>metadata.method</code> を付ける</strong>
+    ビューア用 JSON（<code>metadata / frames / speeds</code>）を出力します。<code>method</code> がチップとモード判定のキーになります。</li>
+  <li><strong>tests/ に不変量テストを書く</strong>
+    実装を直しても変わらない性質（発散・保存量・境界・決定性）を検証します。JS なら <code>node --test</code> + pytest ラッパー。</li>
+  <li><strong>ビューアに登録する</strong>
+    <code>METHOD_LABEL</code> / <code>METHOD_NOTE</code> と、チップ <code>&lt;button data-method="…"&gt;</code> を足します。</li>
+  <li><strong>docs と図を更新する</strong>
+    比較に加えるなら <code>compare_solvers.py</code> の Runner（同じ 4 指標）→ <code>COMPARE_ATLAS.md</code> を再生成。図は <code>docs/diagrams/build_diagrams.py</code> を直して再生成します。</li>
+</ol>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">Python</span><span>手順 2 — tools/gen_curl.py の metadata</span></div>
+  <pre><code class="language-python">meta = {
+    "preset": "curl_smoke",
+    "method": "CURL",
+    "description": "カールノイズの擬似流体 (近似・保存則なし)",
+    "frameCount": args.frames, "particleCount": args.particles,
+    "fps": round(1.0 / args.dt), "dt": args.dt,
+    "bounds": {"min": [...], "max": [...]},
+}
+payload = {"metadata": meta, "frames": frames, "speeds": speeds}</code></pre>
+</div>
+
+<div class="code-block">
+  <div class="code-header"><span class="lang">JavaScript</span><span>手順 4 — viewer/index.html の登録箇所</span></div>
+  <pre><code class="language-javascript">const METHOD_LABEL = { SPH: 'SPH', FLIP: 'FLIP', GNN: 'GNN', GRID: '格子法', CURL: 'カール', DEMO: 'デモ' };
+const METHOD_NOTE = {
+  ...
+  CURL: 'ノイズの回転で流す。発散は小さいが外力や壁に応答しない',
+};
+function guessMethod(meta) {
+  if (meta.method) return String(meta.method).toUpperCase();
+  ...
+  return 'SPH';                                   // method が無いと SPH 扱いになる
+}</code></pre>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠️ よくある抜け</div>
+  <ul style="margin-left:20px;margin-top:8px">
+    <li><code>metadata.method</code> を付け忘れると、<code>guessMethod</code> が <strong>SPH にフォールバック</strong>します。ラベルが違うのに表示は動くため気づきにくい。
+      同じ <code>method</code> のデータは読み込み時に<strong>置換</strong>されるので、別手法が上書きされて消えたように見えることもあります。</li>
+    <li>チップ <code>data-method</code> と <code>METHOD_NOTE</code> のキーの綴りが違うと、ツールチップが空になります。</li>
+    <li>図は SVG を手で直さず、<code>build_diagrams.py</code> を直して再生成します（次の人が同じ図を再生成できるように）。</li>
+    <li>数値は文書に書く前に<strong>再実行</strong>する。Atlas の値は <code>--output</code> で自動生成し、手書きで写さない。</li>
+  </ul>
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">✏️ 演習</div>
+  <ol style="margin-left:20px;margin-top:8px">
+    <li>ダミーの手法 <code>"WAVE"</code>（<code>HeightField</code> の水面の点群化など）をチェックリストの 5 手順に沿って登録する場合に、触るファイルを全て列挙してください。</li>
+    <li>わざと <code>metadata.method</code> を消した JSON を読み込み、ビューアの表示がどう変わるか確かめてください。</li>
+    <li>新しい手法の不変量テストを 3 つ設計してください（そのソルバーで「変わってはいけない」ものは何か）。</li>
   </ol>
 </div>
 </section>

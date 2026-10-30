@@ -93,3 +93,15 @@ test('同じ入力なら同じ結果 (決定的)', () => {
   const a = make(), b = make();
   assert.deepEqual(Array.from(a.h), Array.from(b.h));
 });
+
+// 符号の固定: 山 (crest) は凸レンズのように光を集め、谷 (trough) は散らす。
+// 「ランダムな波で max > 2×mean」だけでは符号が逆でも通ってしまうため、単独の山/谷で確認する。
+test('山は真下に光を集め、谷は散らす (屈折の符号)', () => {
+  const centre = f => { const r = f.res, m = Math.floor(r / 2); let s = 0, n = 0;
+    for (let j = m - 2; j <= m + 2; j++) for (let i = m - 2; i <= m + 2; i++) { s += f.floor[j * r + i]; n++; } return s / n; };
+  const crest = new HeightField({ n: 128, size: 2 }); crest.disturb(1, 1, 0.3, +0.05);
+  const trough = new HeightField({ n: 128, size: 2 }); trough.disturb(1, 1, 0.3, -0.05);
+  const cc = centre(crest.caustics(1.0)), ct = centre(trough.caustics(1.0));
+  assert.ok(cc > 1.5, `山の真下が明るくない: ${cc}`);
+  assert.ok(ct < 0.8, `谷の真下が暗くない: ${ct}`);
+});

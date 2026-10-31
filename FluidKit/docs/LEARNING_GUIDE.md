@@ -370,7 +370,7 @@ $$
 任意の速度場は「発散ゼロの部分 + 圧力の勾配」に分けられる。発散を測り、圧力 $p$ を解いて勾配を引くと発散ゼロになる。
 
 $$
-\nabla^2 p = \nabla\cdot\mathbf{u}^*,\qquad \mathbf{u}^{n+1}=\mathbf{u}^*-\nabla p
+\nabla^2 p = \nabla\cdot\mathbf{u}^{\ast},\qquad \mathbf{u}^{n+1}=\mathbf{u}^{\ast}-\nabla p
 $$
 
 ポアソン方程式 $\nabla^2p=\text{div}$ を、5 点ステンシルの Jacobi/Gauss-Seidel 反復で固定 **20 回**解く(`_project`)。
